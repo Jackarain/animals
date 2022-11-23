@@ -14,6 +14,13 @@ int main()
 			req.set(boost::beast::http::field::host, "www.boost.org");
 			req.set(boost::beast::http::field::user_agent, ANIMALS_VERSION_STRING);
 
+			g.download_cb([](auto data, auto size)
+				{
+					std::cout.write((const char*)data, size);
+				});
+
+			g.dump("file.dump");
+
 			boost::system::error_code ec;
 			auto resp = co_await g.async_perform(
 				"https://www.boost.org", req, uawaitable[ec]);
@@ -25,8 +32,6 @@ int main()
 
 			if (resp.result() != boost::beast::http::status::ok)
 				std::cout << resp << std::endl;
-			else
-				std::cout << boost::beast::buffers_to_string(resp.body().data()) << std::endl;
 
 			co_return;
 		}, net::detached);
