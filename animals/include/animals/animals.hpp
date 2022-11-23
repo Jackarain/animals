@@ -572,6 +572,10 @@ namespace animals
 				{
 					ec = co_await do_perform(**ssp, req, result);
 				}
+				else
+				{
+					BOOST_ASSERT(false && "variant stream is null!");
+				}
 
 				co_return ec;
 			}
