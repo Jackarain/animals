@@ -291,7 +291,7 @@ namespace animals
 						req.content_length(req.body().size());
 				}
 
-				if (boost::to_lower_copy(std::string(parser.scheme())) == "https")
+				if (beast::iequals(parser.scheme(), "https"))
 				{
 					m_ssl_ctx = boost::make_local_shared<
 						net::ssl::context>(net::ssl::context::sslv23_client);
@@ -468,7 +468,7 @@ namespace animals
 					beast::get_lowest_layer(stream).expires_after(
 						std::chrono::seconds(30));
 				}
-				else if (boost::to_lower_copy(std::string(parser.scheme())) == "http")
+				else if (beast::iequals(parser.scheme(), "http"))
 				{
 					// These objects perform our I/O
 					tcp::resolver resolver(m_executor);
