@@ -8,7 +8,6 @@
 #include "utils/misc.hpp"
 #include "utils/logging.hpp"
 #include "utils/scoped_exit.hpp"
-#include "utils/fileop.hpp"
 
 #include <iostream>
 #include <iterator>
@@ -821,62 +820,6 @@ void set_thread_name(std::thread* thread, const char* name)
 	SetThreadName(threadId, name);
 }
 
-std::tuple<std::string, bool> run_command(const std::string& cmd) noexcept
-{
-	SECURITY_ATTRIBUTES sa = { 0 };
-	HANDLE hread, hwrite;
-
-	sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-	sa.bInheritHandle = TRUE;
-
-	if (!CreatePipe(&hread, &hwrite, &sa, 0))
-		return { "", false};
-
-	std::wstring command = L"cmd.exe /C " + boost::nowide::widen(cmd);
-
-	STARTUPINFOW si;
-	PROCESS_INFORMATION pi;
-	si.cb = sizeof(STARTUPINFO);
-	GetStartupInfoW(&si);
-	si.hStdError = hwrite;
-	si.hStdOutput = hwrite;
-	si.wShowWindow = SW_HIDE;
-	si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
-
-	if (!CreateProcessW(NULL, (LPWSTR)command.c_str(), NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi))
-	{
-		CloseHandle(hwrite);
-		CloseHandle(hread);
-
-		return { "", false};
-	}
-
-	CloseHandle(hwrite);
-
-	char buffer[4096] = { 0 };
-	DWORD nbytes;
-	std::ostringstream oss;
-
-	while (true)
-	{
-		if (ReadFile(hread, buffer, 4096, &nbytes, NULL) == FALSE)
-			break;
-
-		oss.write(buffer, nbytes);
-	}
-
-	WaitForSingleObject(pi.hProcess, INFINITE);
-	DWORD exit_code;
-	GetExitCodeProcess(pi.hProcess, &exit_code);
-
-	CloseHandle(hread);
-
-	CloseHandle(pi.hProcess);
-	CloseHandle(pi.hThread);
-
-	return { utf8_from_astring(oss.str()), exit_code == EXIT_SUCCESS ? true : false };
-}
-
 #elif __linux__
 
 uint64_t get_process_id()
@@ -895,28 +838,6 @@ void set_thread_name(const char* name)
 	prctl(PR_SET_NAME, name, 0, 0, 0);
 }
 
-std::tuple<std::string, bool> run_command(const std::string& cmd) noexcept
-{
-	auto pf = popen(cmd.c_str(), "r");
-	if (!pf)
-		return { "", false };
-
-	std::string result;
-	int total = 0;
-
-	while (!feof(pf))
-	{
-		result.resize(total + 1024);
-		auto nread = fread((char*)(result.data() + total), 1, 1024, pf);
-		if (nread <= 0)
-			break;
-		total += nread;
-	}
-	result.resize(total);
-
-	int exit_code = pclose(pf);
-	return { result, exit_code == EXIT_SUCCESS ? true : false };
-}
 
 #elif defined(__APPLE__)
 
@@ -933,28 +854,6 @@ void set_thread_name(const char*/* name*/)
 {
 }
 
-std::tuple<std::string, bool> run_command(const std::string& cmd) noexcept
-{
-	auto pf = popen(cmd.c_str(), "r");
-	if (!pf)
-		return { "", false };
-
-	std::string result;
-	int total = 0;
-
-	while (!feof(pf))
-	{
-		result.resize(total + 1024);
-		auto nread = fread((char*)(result.data() + total), 1, 1024, pf);
-		if (nread <= 0)
-			break;
-		total += nread;
-	}
-	result.resize(total);
-
-	int exit_code = pclose(pf);
-	return { result, exit_code == EXIT_SUCCESS ? true : false };
-}
 
 #elif defined(__OpenBSD__)
 
@@ -1078,7 +977,7 @@ bool make_listen_endpoint(const std::string& address, tcp::endpoint& endp, boost
 		return ipv6only;
 	}
 
-	endp.address(net::ip::address::from_string(host, ec));
+	endp.address(boost::asio::ip::address::from_string(host, ec));
 	endp.port(static_cast<unsigned short>(std::atoi(port.data())));
 
 	return ipv6only;
@@ -1100,27 +999,8 @@ bool make_listen_endpoint(const std::string& address, udp::endpoint& endp, boost
 		return ipv6only;
 	}
 
-	endp.address(net::ip::address::from_string(host, ec));
+	endp.address(boost::asio::ip::address::from_string(host, ec));
 	endp.port(static_cast<unsigned short>(std::atoi(port.data())));
 
 	return ipv6only;
 }
-
-bool same_ipv4_network(const net::ip::network_v4& net, uint32_t u32_addr)
-{
-	net::ip::address_v4 addr(u32_addr);
-	net::ip::network_v4 other(addr, net.netmask());
-
-	if (net.network() == other.network())
-		return true;
-
-	return false;
-}
-
-net::ip::network_v4
-make_network(uint32_t u32_addr, unsigned short prefix_length)
-{
-	auto ipaddr = net::ip::address_v4(u32_addr);
-	return net::ip::make_network_v4(ipaddr, prefix_length);
-}
-

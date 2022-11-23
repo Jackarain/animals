@@ -10,7 +10,6 @@
 #include "utils/internal.hpp"
 
 #include "utils/url_view.hpp"
-#include "utils/io_context_pool.hpp"
 
 // trim 一个string_view对象.
 std::string_view string_trim(std::string_view sv);
@@ -58,11 +57,3 @@ bool make_listen_endpoint(const std::string& address,
 	tcp::endpoint& endp, boost::system::error_code& ec);
 bool make_listen_endpoint(const std::string& address,
 	udp::endpoint& endp, boost::system::error_code& ec);
-
-bool same_ipv4_network(const net::ip::network_v4& net, uint32_t u32_addr);
-
-net::ip::network_v4
-make_network(uint32_t u32_addr, unsigned short prefix_length);
-
-// 运行一个命令, 返回命令输出的信息.
-std::tuple<std::string, bool> run_command(const std::string& cmd) noexcept;
