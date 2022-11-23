@@ -10,9 +10,9 @@ int main()
 		{
 			animals::goat g(ioc.get_executor());
 
-			animals::http_request req{ boost::beast::http::verb::get, "/", 11 };
-			req.set(boost::beast::http::field::host, "www.boost.org");
-			req.set(boost::beast::http::field::user_agent, ANIMALS_VERSION_STRING);
+			animals::http_request req{ animals::http::verb::get, "/", 11 };
+			req.set(animals::http::field::host, "www.boost.org");
+			req.set(animals::http::field::user_agent, ANIMALS_VERSION_STRING);
 
 			g.download_cb([](auto data, auto size)
 				{
@@ -30,7 +30,7 @@ int main()
 				co_return;
 			}
 
-			if (resp.result() != boost::beast::http::status::ok)
+			if (resp.result() != animals::http::status::ok)
 				std::cout << resp << std::endl;
 
 			co_return;

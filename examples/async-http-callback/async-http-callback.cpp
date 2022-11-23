@@ -5,9 +5,9 @@ int main()
 {
 	net::io_context ioc;
 
-	animals::http_request req{ boost::beast::http::verb::get, "/", 11 };
-	req.set(boost::beast::http::field::host, "www.boost.org");
-	req.set(boost::beast::http::field::user_agent, ANIMALS_VERSION_STRING);
+	animals::http_request req{ animals::http::verb::get, "/", 11 };
+	req.set(animals::http::field::host, "www.boost.org");
+	req.set(animals::http::field::user_agent, ANIMALS_VERSION_STRING);
 
 	animals::goat g(ioc.get_executor());
 	g.async_perform("https://www.boost.org", req,
@@ -19,10 +19,10 @@ int main()
 				return;
 			}
 
-			if (resp.result() != boost::beast::http::status::ok)
+			if (resp.result() != animals::http::status::ok)
 				std::cout << resp << std::endl;
 			else
-				std::cout << boost::beast::buffers_to_string(resp.body().data()) << std::endl;
+				std::cout << animals::buffers_to_string(resp.body().data()) << std::endl;
 		});
 
 	ioc.run();
