@@ -13,7 +13,7 @@ int main(int argc, char** argv)
 	std::string_view url(argv[1]);
 
 	try {
-		urls::url_view(url);
+		urls::url_view{ url };
 	}
 	catch (const std::exception& e)
 	{

@@ -149,19 +149,19 @@ namespace urls {
 	public:
 		url_view() = default;
 
-		url_view(const char* s)
+		explicit url_view(const char* s)
 		{
 			if (!parse(s))
 				throw std::invalid_argument("URI malformed");
 		}
 
-		url_view(const std::string& s)
+		explicit url_view(const std::string& s)
 		{
 			if (!parse(s))
 				throw std::invalid_argument("URI malformed");
 		}
 
-		url_view(std::string_view s)
+		explicit url_view(std::string_view s)
 		{
 			if (!parse(s))
 				throw std::invalid_argument("URI malformed");
@@ -169,49 +169,49 @@ namespace urls {
 
 		~url_view() = default;
 
-		std::string_view scheme() noexcept
+		inline std::string_view scheme() noexcept
 		{
 			return scheme_;
 		}
 
-		std::string_view host() noexcept
+		inline std::string_view host() noexcept
 		{
 			return host_;
 		}
 
-		std::string_view port() noexcept
+		inline std::string_view port() noexcept
 		{
 			if (!port_.empty())
 				return port_;
 			return knownport();
 		}
 
-		std::string_view username() noexcept
+		inline std::string_view username() noexcept
 		{
 			return username_;
 		}
 
-		std::string_view password() noexcept
+		inline std::string_view password() noexcept
 		{
 			return password_;
 		}
 
-		std::string_view path() noexcept
+		inline std::string_view path() noexcept
 		{
 			return path_;
 		}
 
-		std::string_view query() noexcept
+		inline std::string_view query() noexcept
 		{
 			return query_;
 		}
 
-		std::string_view fragment() noexcept
+		inline std::string_view fragment() noexcept
 		{
 			return fragment_;
 		}
 
-		bool parse(std::string_view url) noexcept
+		inline bool parse(std::string_view url) noexcept
 		{
 			using namespace detail;
 
@@ -832,30 +832,30 @@ namespace urls {
 
 			~qs_iterator() = default;
 
-			value_type operator*() const noexcept
+			inline value_type operator*() const noexcept
 			{
 				return value_;
 			}
 
-			pointer operator->() const noexcept
+			inline pointer operator->() const noexcept
 			{
 				return &value_;
 			}
 
-			reference operator++() noexcept
+			inline reference operator++() noexcept
 			{
 				increment();
 				return *this;
 			}
 
-			reference operator++(int) noexcept
+			inline reference operator++(int) noexcept
 			{
 				reference tmp = *this;
 				increment();
 				return tmp;
 			}
 
-			bool operator==(const qs_iterator &other) const noexcept
+			inline bool operator==(const qs_iterator &other) const noexcept
 			{
 				if (value_.first == other.value_.first &&
 					value_.second == other.value_.second)
@@ -863,23 +863,23 @@ namespace urls {
 				return false;
 			}
 
-			bool operator!=(const qs_iterator &other) const noexcept
+			inline bool operator!=(const qs_iterator &other) const noexcept
 			{
 				return !(*this == other);
 			}
 
-			std::string_view key() const noexcept
+			inline std::string_view key() const noexcept
 			{
 				return value_.first;
 			}
 
-			std::string_view value() const noexcept
+			inline std::string_view value() const noexcept
 			{
 				return value_.second;
 			}
 
 		protected:
-			void make_value() noexcept
+			inline void make_value() noexcept
 			{
 				auto f = qs_.find_first_of('=');
 				if (f == std::string_view::npos)
@@ -893,7 +893,7 @@ namespace urls {
 				value_.second = std::string_view(qs_.data() + f + 1, e - f - 1);
 			}
 
-			void increment()
+			inline void increment()
 			{
 				auto second = value_.second.data() + value_.second.size() + 1;
 				auto end = qs_.data() + qs_.size();
@@ -912,19 +912,19 @@ namespace urls {
 			value_type value_;
 		};
 
-		qs_iterator qs_begin() const noexcept
+		inline qs_iterator qs_begin() const noexcept
 		{
 			return qs_iterator(query_);
 		}
 
-		qs_iterator qs_end() const noexcept
+		inline qs_iterator qs_end() const noexcept
 		{
 			return qs_iterator();
 		}
 
 	private:
 
-		std::string_view knownport() noexcept
+		inline std::string_view knownport() noexcept
 		{
 			using namespace detail;
 
