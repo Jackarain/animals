@@ -379,7 +379,7 @@ namespace animals
 					// Look up the domain name
 					auto const results =
 						co_await resolver.async_resolve(
-							host, port, uawaitable[ec]);
+							host, port, net_awaitable[ec]);
 					if (ec)
 						co_return ec;
 
@@ -406,14 +406,14 @@ namespace animals
 
 						auto const socks_results =
 							co_await resolver.async_resolve(
-								socks_host, socks_port, uawaitable[ec]);
+								socks_host, socks_port, net_awaitable[ec]);
 						if (ec)
 							co_return ec;
 
 						co_await asio_util::async_connect(
 							get_lowest_layer(stream).socket(),
 							socks_results,
-							uawaitable[ec]);
+							net_awaitable[ec]);
 						if (ec)
 							co_return ec;
 
@@ -435,7 +435,7 @@ namespace animals
 							opt.version = socks::socks4a_version;
 
 						co_await socks::async_socks_handshake(
-							socket, opt, uawaitable[ec]);
+							socket, opt, net_awaitable[ec]);
 						if (ec)
 							co_return ec;
 
@@ -447,7 +447,7 @@ namespace animals
 						// Make the connection on the IP address we get from a lookup
 						co_await asio_util::async_connect(
 							get_lowest_layer(stream).socket(),
-							results, uawaitable[ec]);
+							results, net_awaitable[ec]);
 						if (ec)
 							co_return ec;
 
@@ -457,7 +457,7 @@ namespace animals
 
 					// Perform the SSL handshake
 					co_await stream.async_handshake(
-						net::ssl::stream_base::client, uawaitable[ec]);
+						net::ssl::stream_base::client, net_awaitable[ec]);
 					if (ec)
 						co_return ec;
 
@@ -481,7 +481,7 @@ namespace animals
 
 					// Look up the domain name
 					auto const results = co_await resolver.async_resolve(
-						host, port, uawaitable[ec]);
+						host, port, net_awaitable[ec]);
 					if (ec)
 						co_return ec;
 
@@ -507,12 +507,12 @@ namespace animals
 
 						auto const socks_results =
 							co_await resolver.async_resolve(
-								socks_host, socks_port, uawaitable[ec]);
+								socks_host, socks_port, net_awaitable[ec]);
 						if (ec)
 							co_return ec;
 
 						co_await asio_util::async_connect(
-							stream.socket(), socks_results, uawaitable[ec]);
+							stream.socket(), socks_results, net_awaitable[ec]);
 						if (ec)
 							co_return ec;
 
@@ -532,7 +532,7 @@ namespace animals
 							opt.version = socks::socks4a_version;
 
 						co_await socks::async_socks_handshake(
-							stream.socket(), opt, uawaitable[ec]);
+							stream.socket(), opt, net_awaitable[ec]);
 						if (ec)
 							co_return ec;
 
@@ -543,7 +543,7 @@ namespace animals
 					{
 						// Make the connection on the IP address we get from a lookup
 						co_await asio_util::async_connect(
-							stream.socket(), results, uawaitable[ec]);
+							stream.socket(), results, net_awaitable[ec]);
 						if (ec)
 							co_return ec;
 
@@ -610,7 +610,7 @@ namespace animals
 					beast::get_lowest_layer(stream).expires_after(30s);
 					[[maybe_unused]] auto bytes =
 						co_await http::async_read_some(
-							stream, buffer, p, uawaitable[ec]);
+							stream, buffer, p, net_awaitable[ec]);
 					if (ec)
 						co_return ec;
 
@@ -715,7 +715,7 @@ namespace animals
 
 				// Send the HTTP request to the remote host
 				co_await http::async_write(
-					stream, req, uawaitable[ec]);
+					stream, req, net_awaitable[ec]);
 				if (ec)
 					co_return ec;
 
@@ -741,7 +741,7 @@ namespace animals
 
 					boost::system::error_code ignore_ec;
 					co_await stream.async_shutdown(
-						uawaitable[ignore_ec]);
+						net_awaitable[ignore_ec]);
 				}
 				else if constexpr (std::is_same_v<std::decay_t<S>, tcp_stream>)
 				{

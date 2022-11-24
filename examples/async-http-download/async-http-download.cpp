@@ -40,7 +40,7 @@ int main(int argc, char** argv)
 
 			boost::system::error_code ec;
 			auto resp = co_await g.async_perform(
-				std::string(url), req, uawaitable[ec]);
+				std::string(url), req, net_awaitable[ec]);
 			if (ec)
 			{
 				LOG_ERR << "http got: " << ec.message();

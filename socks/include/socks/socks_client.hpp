@@ -105,13 +105,13 @@ namespace socks {
 
 			request.commit(bytes_to_write);
 			[[maybe_unused]] auto bytes = co_await net::async_write(
-				socket, request, uawaitable[ec]);
+				socket, request, net_awaitable[ec]);
 			if (ec) co_return;
 			BOOST_ASSERT(bytes_to_write == bytes);
 
 			net::streambuf response;
 			bytes = co_await net::async_read(socket, response,
-				net::transfer_exactly(2), uawaitable[ec]);
+				net::transfer_exactly(2), net_awaitable[ec]);
 			if (ec) co_return;
 			BOOST_ASSERT(response.size() == 2);
 
@@ -160,13 +160,13 @@ namespace socks {
 
 				// write username & password.
 				bytes = co_await net::async_write(
-					socket, request, uawaitable[ec]);
+					socket, request, net_awaitable[ec]);
 				if (ec) co_return;
 				BOOST_ASSERT(bytes_to_write == bytes);
 
 				response.consume(response.size());
 				bytes = co_await net::async_read(socket, response,
-					net::transfer_exactly(2), uawaitable[ec]);
+					net::transfer_exactly(2), net_awaitable[ec]);
 				if (ec) co_return;
 				BOOST_ASSERT(response.size() == 2);
 
@@ -234,7 +234,7 @@ namespace socks {
 
 					auto target_endpoints =
 						co_await resolver.async_resolve(
-							hostname, std::to_string(port), uawaitable[ec]);
+							hostname, std::to_string(port), net_awaitable[ec]);
 					if (ec) co_return;
 
 					if (target_endpoints.empty())
@@ -266,13 +266,13 @@ namespace socks {
 
 			request.commit(bytes_to_write);
 			bytes = co_await net::async_write(
-				socket, request, uawaitable[ec]);
+				socket, request, net_awaitable[ec]);
 			if (ec) co_return;
 			BOOST_ASSERT(bytes_to_write == bytes);
 
 			response.consume(response.size());
 			bytes = co_await net::async_read(socket, response,
-				net::transfer_exactly(10), uawaitable[ec]);
+				net::transfer_exactly(10), net_awaitable[ec]);
 			if (ec) co_return;
 			BOOST_ASSERT(response.size() == bytes);
 
@@ -301,14 +301,14 @@ namespace socks {
 				auto domain_length = read<uint8_t>(resp);
 
 				bytes = co_await net::async_read(socket, response,
-					net::transfer_exactly(domain_length - 3), uawaitable[ec]);
+					net::transfer_exactly(domain_length - 3), net_awaitable[ec]);
 				if (ec) co_return;
 			}
 
 			if (atyp == SOCKS5_ATYP_IPV6)
 			{
 				bytes = co_await net::async_read(socket, response,
-					net::transfer_exactly(12), uawaitable[ec]);
+					net::transfer_exactly(12), net_awaitable[ec]);
 				if (ec) co_return;
 			}
 
@@ -402,7 +402,7 @@ namespace socks {
 				auto error = ec;
 
 				auto target_endpoints = co_await resolver.async_resolve(
-					hostname, std::to_string(port), uawaitable[ec]);
+					hostname, std::to_string(port), net_awaitable[ec]);
 				if (ec) co_return;
 
 				if (target_endpoints.empty())
@@ -435,12 +435,12 @@ namespace socks {
 			}
 
 			request.commit(bytes_to_write);
-			co_await net::async_write(socket, request, uawaitable[ec]);
+			co_await net::async_write(socket, request, net_awaitable[ec]);
 			if (ec) co_return;
 
 			net::streambuf response;
 			co_await net::async_read(socket, response,
-				net::transfer_exactly(8), uawaitable[ec]);
+				net::transfer_exactly(8), net_awaitable[ec]);
 			if (ec) co_return;
 
 			auto resp = static_cast<const unsigned char*>(

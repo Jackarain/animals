@@ -16,7 +16,7 @@ int main()
 
 			boost::system::error_code ec;
 			auto resp = co_await g.async_perform(
-				"https://www.boost.org", req, uawaitable[ec]);
+				"https://www.boost.org", req, net_awaitable[ec]);
 			if (ec)
 			{
 				LOG_ERR << "http got: " << ec.message();
