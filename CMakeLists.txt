@@ -489,5 +489,4 @@ endif()
 
 ################################################################################
 
-configure_file(animals.service.in animals.service)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/animals.service DESTINATION /usr/lib/systemd/system/)
