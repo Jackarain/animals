@@ -31,6 +31,10 @@ std::string to_string(float v, int width, int precision = 3);
 std::string base58_decode(std::string_view input);
 std::string base58_encode(std::string_view input);
 
+// base64编解码.
+std::string base64_decode(std::string_view input);
+std::string base64_encode(std::string_view input);
+
 // 百分编码解码.
 bool unescape_path(const std::string& in, std::string& out);
 
