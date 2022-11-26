@@ -11,6 +11,7 @@ add_library(animals STATIC)
 target_sources(animals
 	PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/animals.hpp
+	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/goat.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/default_cert.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/http_last_modified.hpp
 )
