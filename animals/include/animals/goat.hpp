@@ -18,6 +18,11 @@
 
 #include "animals/animals.hpp"
 
+#include <boost/variant2.hpp>
+
+#include <boost/smart_ptr/local_shared_ptr.hpp>
+#include <boost/smart_ptr/make_local_shared.hpp>
+
 #ifndef ANIMALS_VERSION_STRING
 #  define ANIMALS_VERSION_STRING         "animals/1.0"
 #endif
@@ -58,7 +63,7 @@ namespace animals
 		using ssl_stream_ptr = boost::local_shared_ptr<ssl_stream>;
 		using tcp_stream = beast::tcp_stream;
 		using tcp_stream_ptr = boost::local_shared_ptr<tcp_stream>;
-		using variant_socket = boost::variant<tcp_stream_ptr, ssl_stream_ptr>;
+		using variant_stream = boost::variant2::variant<tcp_stream_ptr, ssl_stream_ptr>;
 		using download_handler = std::function<void(const void*, std::size_t)>;
 
 	public:
@@ -132,7 +137,7 @@ namespace animals
 		// 重置, 用于重复使用应该对象.
 		inline void reset()
 		{
-			m_stream = variant_socket{};
+			m_stream = variant_stream{};
 			m_dump_file.clear();
 			m_download_percent = {};
 			m_content_lentgh = {};
@@ -193,7 +198,7 @@ namespace animals
 		// 关闭http底层调用, 强制返回.
 		inline void close()
 		{
-			boost::apply_visitor([](auto p) mutable
+			boost::variant2::visit([](auto p) mutable
 				{
 					boost::system::error_code ec;
 					if (p)
@@ -343,21 +348,12 @@ namespace animals
 						co_return ec;
 				}
 
-				variant_socket newsocket(
+				variant_stream newsocket(
 					boost::make_local_shared<ssl_stream>(
 						m_executor, *m_ssl_ctx));
 				m_stream.swap(newsocket);
 
-				auto& stream = *(boost::get<ssl_stream_ptr>(m_stream));
-
-				// Set SNI Hostname (many hosts need this to handshake successfully)
-				if (!SSL_set_tlsext_host_name(
-					stream.native_handle(), host.c_str()))
-				{
-					ec.assign(static_cast<int>(
-						::ERR_get_error()), net::error::get_ssl_category());
-					co_return ec;
-				}
+				auto& stream = *(boost::variant2::get<ssl_stream_ptr>(m_stream));
 
 				std::string port(parser.port());
 				if (port.empty())
@@ -398,6 +394,15 @@ namespace animals
 					get_lowest_layer(stream).socket().set_option(option, ec);
 				}
 
+				// Set SNI Hostname (many hosts need this to handshake successfully)
+				if (!SSL_set_tlsext_host_name(
+					stream.native_handle(), host.c_str()))
+				{
+					ec.assign(static_cast<int>(
+						::ERR_get_error()), net::error::get_ssl_category());
+					co_return ec;
+				}
+
 				// Perform the SSL handshake
 				co_await stream.async_handshake(
 					net::ssl::stream_base::client, net_awaitable[ec]);
@@ -423,12 +428,12 @@ namespace animals
 				if (ec)
 					co_return ec;
 
-				variant_socket newsocket(
+				variant_stream newsocket(
 					boost::make_local_shared<tcp_stream>(m_executor));
 				m_stream.swap(newsocket);
 
 				// Get stream object ref.
-				auto& stream = *(boost::get<tcp_stream_ptr>(m_stream));
+				auto& stream = *(boost::variant2::get<tcp_stream_ptr>(m_stream));
 
 				// Set the timeout.
 				beast::get_lowest_layer(stream).expires_after(30s);
@@ -466,11 +471,11 @@ namespace animals
 				co_return ec;
 			}
 
-			if (tcp_stream_ptr* tsp = boost::get<tcp_stream_ptr>(&m_stream))
+			if (auto tsp = boost::variant2::get_if<tcp_stream_ptr>(&m_stream))
 			{
 				ec = co_await do_perform(**tsp, req, result);
 			}
-			else if (ssl_stream_ptr* ssp = boost::get<ssl_stream_ptr>(&m_stream))
+			else if (auto ssp = boost::variant2::get_if<ssl_stream_ptr>(&m_stream))
 			{
 				ec = co_await do_perform(**ssp, req, result);
 			}
@@ -789,7 +794,7 @@ namespace animals
 
 	private:
 		executor_type m_executor;
-		variant_socket m_stream;
+		variant_stream m_stream;
 		boost::local_shared_ptr<net::ssl::context> m_ssl_ctx;
 		bool m_check_certificate;
 		std::string m_cert_path;

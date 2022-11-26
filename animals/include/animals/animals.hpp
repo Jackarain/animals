@@ -17,11 +17,6 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/ssl.hpp>
 
-#include <boost/variant.hpp>
-
-#include <boost/smart_ptr/local_shared_ptr.hpp>
-#include <boost/smart_ptr/make_local_shared.hpp>
-
 #include <chrono>
 #include <filesystem>
 
