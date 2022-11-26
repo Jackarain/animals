@@ -183,7 +183,10 @@ namespace animals
 						http_request* req) mutable
 					{
 						initiate_do_perform(
-							std::forward<decltype(handler)>(handler), url, proxy, req);
+							std::forward<decltype(handler)>(handler),
+							url,
+							proxy,
+							req);
 					}, handler, url, proxy, &req);
 		}
 
@@ -207,12 +210,19 @@ namespace animals
 			std::string url, std::string proxy, http_request* req)
 		{
 			net::co_spawn(m_executor,
-				[this, handler = std::forward<Handler>(handler), url, proxy, req]
+				[this,
+				handler = std::forward<Handler>(handler),
+				url,
+				proxy,
+				req]
 			() mutable->net::awaitable<void>
 			{
 				http_response result;
 				auto ec =
-					co_await do_async_perform(*req, result, url, proxy);
+					co_await do_async_perform(*req,
+						result,
+						url,
+						proxy);
 				handler(ec, result);
 				co_return;
 			}
