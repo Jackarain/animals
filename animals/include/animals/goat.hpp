@@ -771,6 +771,8 @@ namespace animals
 				do {
 					co_await http::async_read_header(
 						socket, buffer, p, net_awaitable[ec]);
+					if (ec)
+						co_return ec;
 				} while (!p.is_header_done());
 
 				auto& messages = p.get();
