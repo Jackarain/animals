@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include "utils/logging.hpp"
 #include "utils/misc.hpp"
 #include "utils/url_view.hpp"
 #include "utils/async_connect.hpp"
@@ -171,7 +170,7 @@ namespace animals
 
 		// 异步执行一个url请求, 请求参数由req指定, 请求返回通过error_code 或 http_response
 		// 得到, 如果发生错误, 则会得到error_code, 若请求正常则返回http_response.
-		// 可指定sock5 proxy, 如 socks5://127.0.0.1:1080
+		// 可指定sock5/http proxy, 如 socks5://127.0.0.1:1080, http://127.0.0.1:1080
 		template<class Handler>
 		auto async_perform(const std::string& url,
 			const std::string& proxy, http_request& req, Handler&& handler)
@@ -291,10 +290,7 @@ namespace animals
 					{
 						m_ssl_ctx->add_verify_path(dir, ec);
 						if (ec)
-						{
-							LOG_WARN << "add_verify_path fail"
-								<< ", check your cert dir: " << dir;
-						}
+							co_return ec;
 					}
 
 					if (!m_cert_path.empty())
@@ -319,10 +315,7 @@ namespace animals
 								m_cert_data.size()),
 							ec);
 						if (ec)
-						{
-							LOG_WARN << "add_certificate_authority fail"
-								<< ", check your cert data!";
-						}
+							co_return ec;
 					}
 					if (!load_cert)
 					{
@@ -775,12 +768,6 @@ namespace animals
 						co_return ec;
 				} while (!p.is_header_done());
 
-				auto& messages = p.get();
-				if (messages.result() != http::status::ok)
-				{
-					LOG_DBG << "http proxy: " << messages.result_int()
-						<< ", reason: " << std::string(messages.reason());
-				}
 				co_return ec;
 			}
 

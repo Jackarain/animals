@@ -1,4 +1,6 @@
-﻿#include "animals/animals.hpp"
+﻿#include "utils/logging.hpp"
+
+#include "animals/animals.hpp"
 #include "utils/url_view.hpp"
 namespace net = boost::asio;
 
