@@ -8,6 +8,7 @@
 #pragma once
 
 #include "utils/logging.hpp"
+#include "utils/misc.hpp"
 #include "utils/url_view.hpp"
 #include "utils/async_connect.hpp"
 
@@ -157,13 +158,13 @@ namespace animals
 				void(boost::system::error_code, http_response)>(
 					[this](auto&& handler,
 						std::string url,
-						std::string socks,
+						std::string proxy,
 						http_request* req) mutable
 					{
 						initiate_do_perform(
 							std::forward<decltype(handler)>(handler),
 							url,
-							socks,
+							proxy,
 							req);
 					}, handler, url, "", &req);
 		}
@@ -173,18 +174,18 @@ namespace animals
 		// 可指定sock5 proxy, 如 socks5://127.0.0.1:1080
 		template<class Handler>
 		auto async_perform(const std::string& url,
-			const std::string& socks, http_request& req, Handler&& handler)
+			const std::string& proxy, http_request& req, Handler&& handler)
 		{
 			return net::async_initiate<Handler,
 				void(boost::system::error_code, http_response)>(
 					[this](auto handler,
 						std::string url,
-						std::string socks,
+						std::string proxy,
 						http_request* req) mutable
 					{
 						initiate_do_perform(
-							std::forward(handler), url, socks, req);
-					}, handler, url, "", &req);
+							std::forward<decltype(handler)>(handler), url, proxy, req);
+					}, handler, url, proxy, &req);
 		}
 
 		// 关闭http底层调用, 强制返回.
@@ -204,15 +205,15 @@ namespace animals
 	private:
 		template <typename Handler>
 		void initiate_do_perform(Handler&& handler,
-			std::string url, std::string socks, http_request* req)
+			std::string url, std::string proxy, http_request* req)
 		{
 			net::co_spawn(m_executor,
-				[this, handler = std::forward<Handler>(handler), url, socks, req]
+				[this, handler = std::forward<Handler>(handler), url, proxy, req]
 			() mutable->net::awaitable<void>
 			{
 				http_response result;
 				auto ec =
-					co_await do_async_perform(*req, result, url, socks);
+					co_await do_async_perform(*req, result, url, proxy);
 				handler(ec, result);
 				co_return;
 			}
@@ -221,7 +222,7 @@ namespace animals
 
 		net::awaitable<boost::system::error_code>
 			do_async_perform(http_request& req, http_response& result,
-				const std::string& url, std::string socks_url)
+				const std::string& url, std::string proxy_url)
 		{
 			boost::system::error_code ec;
 			urls::url_view parser;
@@ -355,10 +356,11 @@ namespace animals
 					co_return ec;
 				}
 
-				tcp::resolver resolver(m_executor);
 				std::string port(parser.port());
 				if (port.empty())
 					port = "443";
+
+				tcp::resolver resolver(m_executor);
 
 				// Look up the domain name
 				auto const results =
@@ -371,60 +373,14 @@ namespace animals
 				beast::get_lowest_layer(stream).expires_after(
 					std::chrono::seconds(30));
 
-				if (!socks_url.empty())
+				if (!proxy_url.empty())
 				{
-					urls::url_view socks_parser;
-
-					// Parser socks url.
-					if (!socks_parser.parse(socks_url))
-					{
-						ec = net::error::make_error_code(
-							net::error::invalid_argument);
-						co_return ec;
-					}
-
-					std::string socks_host(socks_parser.host());
-					std::string socks_port(socks_parser.port());
-					if (socks_port.empty())
-						socks_port = "1080";
-
-					auto const socks_results =
-						co_await resolver.async_resolve(
-							socks_host, socks_port, net_awaitable[ec]);
-					if (ec)
-						co_return ec;
-
-					co_await asio_util::async_connect(
-						get_lowest_layer(stream).socket(),
-						socks_results,
-						net_awaitable[ec]);
-					if (ec)
-						co_return ec;
-
-					auto& socket = get_lowest_layer(stream).socket();
-
-					socks::socks_client_option opt;
-
-					opt.target_host = host;
-					opt.target_port = atoi(port.c_str());
-					opt.proxy_hostname = true;
-					opt.username = socks_parser.username();
-					opt.password = socks_parser.password();
-
-					if (socks_parser.scheme() == "socks5")
-						opt.version = socks::socks5_version;
-					else if (socks_parser.scheme() == "socks4")
-						opt.version = socks::socks4_version;
-					else if (socks_parser.scheme() == "socks4a")
-						opt.version = socks::socks4a_version;
-
-					co_await socks::async_socks_handshake(
-						socket, opt, net_awaitable[ec]);
+					ec = co_await do_proxy(stream, proxy_url, host, port);
 					if (ec)
 						co_return ec;
 
 					net::socket_base::keep_alive option(true);
-					socket.set_option(option, ec);
+					get_lowest_layer(stream).socket().set_option(option, ec);
 				}
 				else
 				{
@@ -451,17 +407,12 @@ namespace animals
 			}
 			else if (beast::iequals(parser.scheme(), "http"))
 			{
-				// These objects perform our I/O
-				tcp::resolver resolver(m_executor);
-
-				variant_socket newsocket(
-					boost::make_local_shared<tcp_stream>(m_executor));
-				m_stream.swap(newsocket);
-
-				auto& stream = *(boost::get<tcp_stream_ptr>(m_stream));
 				std::string port(parser.port());
 				if (port.empty())
 					port = "80";
+
+				// These objects perform our I/O
+				tcp::resolver resolver(m_executor);
 
 				// Look up the domain name
 				auto const results = co_await resolver.async_resolve(
@@ -469,54 +420,19 @@ namespace animals
 				if (ec)
 					co_return ec;
 
+				variant_socket newsocket(
+					boost::make_local_shared<tcp_stream>(m_executor));
+				m_stream.swap(newsocket);
+
+				// Get stream object ref.
+				auto& stream = *(boost::get<tcp_stream_ptr>(m_stream));
+
 				// Set the timeout.
 				beast::get_lowest_layer(stream).expires_after(30s);
 
-				if (!socks_url.empty())
+				if (!proxy_url.empty())
 				{
-					urls::url_view socks_parser;
-
-					// Parser socks url.
-					if (!socks_parser.parse(socks_url))
-					{
-						ec = net::error::make_error_code(
-							net::error::invalid_argument);
-						co_return ec;
-					}
-
-					std::string socks_host(socks_parser.host());
-					std::string socks_port(socks_parser.port());
-					if (socks_port.empty())
-						socks_port = "1080";
-
-					auto const socks_results =
-						co_await resolver.async_resolve(
-							socks_host, socks_port, net_awaitable[ec]);
-					if (ec)
-						co_return ec;
-
-					co_await asio_util::async_connect(
-						stream.socket(), socks_results, net_awaitable[ec]);
-					if (ec)
-						co_return ec;
-
-					socks::socks_client_option opt;
-
-					opt.target_host = host;
-					opt.target_port = std::atoi(port.c_str());
-					opt.proxy_hostname = true;
-					opt.username = socks_parser.username();
-					opt.password = socks_parser.password();
-
-					if (socks_parser.scheme() == "socks5")
-						opt.version = socks::socks5_version;
-					else if (socks_parser.scheme() == "socks4")
-						opt.version = socks::socks4_version;
-					else if (socks_parser.scheme() == "socks4a")
-						opt.version = socks::socks4a_version;
-
-					co_await socks::async_socks_handshake(
-						stream.socket(), opt, net_awaitable[ec]);
+					ec = co_await do_proxy(stream, proxy_url, host, port);
 					if (ec)
 						co_return ec;
 
@@ -740,6 +656,136 @@ namespace animals
 			co_return ec;
 		}
 
+		template<class S>
+		net::awaitable<boost::system::error_code>
+		do_proxy(S& stream, const std::string& proxy_url,
+			const std::string& host, const std::string& port)
+		{
+			urls::url_view url;
+			boost::system::error_code ec;
+
+			// Parser socks url.
+			if (!url.parse(proxy_url))
+			{
+				ec = net::error::make_error_code(
+					net::error::invalid_argument);
+				co_return ec;
+			}
+
+			if (url.scheme().starts_with("socks"))
+			{
+				std::string socks_host(url.host());
+				std::string socks_port(url.port());
+				if (socks_port.empty())
+					socks_port = "1080";
+
+				// These objects perform our I/O
+				tcp::resolver resolver(m_executor);
+
+				auto const socks_results =
+					co_await resolver.async_resolve(
+						socks_host, socks_port, net_awaitable[ec]);
+				if (ec)
+					co_return ec;
+
+				auto& socket = get_lowest_layer(stream).socket();
+
+				co_await asio_util::async_connect(
+					socket,
+					socks_results,
+					net_awaitable[ec]);
+				if (ec)
+					co_return ec;
+
+				socks::socks_client_option opt;
+
+				opt.target_host = host;
+				opt.target_port = atoi(port.c_str());
+				opt.proxy_hostname = true;
+				opt.username = url.username();
+				opt.password = url.password();
+
+				if (url.scheme() == "socks5")
+					opt.version = socks::socks5_version;
+				else if (url.scheme() == "socks4")
+					opt.version = socks::socks4_version;
+				else if (url.scheme() == "socks4a")
+					opt.version = socks::socks4a_version;
+
+				co_await socks::async_socks_handshake(
+					socket, opt, net_awaitable[ec]);
+
+				co_return ec;
+			}
+			else if (proxy_url.starts_with("http"))
+			{
+				std::string proxy_host(url.host());
+				std::string proxy_port(url.port());
+
+				// Default http proxy port: 1080
+				if (proxy_port.empty())
+					proxy_port = "1080";
+
+				// These objects perform our I/O
+				tcp::resolver resolver(m_executor);
+
+				auto const proxy_results =
+					co_await resolver.async_resolve(
+						proxy_host, proxy_port, net_awaitable[ec]);
+				if (ec)
+					co_return ec;
+
+				auto& socket = get_lowest_layer(stream).socket();
+
+				co_await asio_util::async_connect(
+					socket,
+					proxy_results,
+					net_awaitable[ec]);
+				if (ec)
+					co_return ec;
+
+				auto target = host + ":" + port;
+				http_request req{ animals::http::verb::connect, target, 11};
+				req.set(http::field::proxy_connection, "Keep-Alive");
+				req.set(http::field::host, target);
+				req.set(http::field::user_agent, ANIMALS_VERSION_STRING);
+
+				if (!url.username().empty())
+				{
+					auto userinfo = std::string(url.username())
+						+ ":"
+						+ std::string(url.password());
+					req.set(http::field::proxy_authorization,
+						base64_encode(userinfo));
+				}
+
+				http::serializer<true, http::string_body> sr(req);
+				co_await http::async_write_header(socket, sr, net_awaitable[ec]);
+				if (ec)
+					co_return ec;
+
+				http::response_parser<
+					http_response::body_type> p;
+				boost::beast::flat_buffer buffer{ 1024 };
+
+				do {
+					co_await http::async_read_header(
+						socket, buffer, p, net_awaitable[ec]);
+				} while (!p.is_header_done());
+
+				auto& messages = p.get();
+				if (messages.result() != http::status::ok)
+				{
+					LOG_DBG << "http proxy: " << messages.result_int()
+						<< ", reason: " << std::string(messages.reason());
+				}
+				co_return ec;
+			}
+
+			ec = net::error::make_error_code(
+				net::error::invalid_argument);
+			co_return ec;
+		}
 
 
 	private:
