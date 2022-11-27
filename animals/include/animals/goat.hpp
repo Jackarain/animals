@@ -128,6 +128,12 @@ namespace animals
 			return m_content_lentgh;
 		}
 
+		// 返回当前url.
+		inline const std::string& url() const
+		{
+			return m_url;
+		}
+
 		// 设置下载数据回调.
 		inline void download_cb(download_handler cb)
 		{
