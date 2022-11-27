@@ -154,6 +154,7 @@ namespace animals
 
 		// 异步执行一个url请求, 请求参数由req指定, 请求返回通过error_code 或 http_response
 		// 得到, 如果发生错误, 则会得到error_code, 若请求正常则返回http_response.
+		// Handler 函数签名为: void(boost::system::error_code, http_response)
 		template<class Handler>
 		auto async_perform(const std::string& url,
 			http_request& req, Handler&& handler)
@@ -176,6 +177,7 @@ namespace animals
 		// 异步执行一个url请求, 请求参数由req指定, 请求返回通过error_code 或 http_response
 		// 得到, 如果发生错误, 则会得到error_code, 若请求正常则返回http_response.
 		// 可指定sock5/http proxy, 如 socks5://127.0.0.1:1080, http://127.0.0.1:1080
+		// Handler 函数签名为: void(boost::system::error_code, http_response)
 		template<class Handler>
 		auto async_perform(const std::string& url,
 			const std::string& proxy, http_request& req, Handler&& handler)
