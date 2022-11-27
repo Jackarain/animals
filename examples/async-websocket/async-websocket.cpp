@@ -18,7 +18,7 @@ int main()
 
 			boost::system::error_code ec;
 			auto resp = co_await ws.async_perform(
-				"wss://echo.websocket.events/", req, net_awaitable[ec]);
+				"ws://echo.websocket.events/", req, net_awaitable[ec]);
 			if (ec)
 			{
 				LOG_ERR << "http got: " << ec.message();
