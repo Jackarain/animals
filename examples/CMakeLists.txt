@@ -1,3 +1,5 @@
 add_subdirectory(async-http-callback)
 add_subdirectory(async-http-coroutine)
 add_subdirectory(async-http-download)
+add_subdirectory(async-websocket)
+add_subdirectory(async-websocket-ssl)
