@@ -297,7 +297,7 @@ namespace animals
 
 			if (beast::iequals(parser.scheme(), "https"))
 			{
-				m_ssl_ctx = boost::make_local_shared<
+				m_ssl_ctx = std::make_unique<
 					net::ssl::context>(net::ssl::context::sslv23_client);
 
 				if (m_check_certificate)
@@ -803,7 +803,7 @@ namespace animals
 	private:
 		executor_type m_executor;
 		variant_stream m_stream;
-		boost::local_shared_ptr<net::ssl::context> m_ssl_ctx;
+		std::unique_ptr<net::ssl::context> m_ssl_ctx;
 		bool m_check_certificate;
 		std::string m_cert_path;
 		std::string m_cert_file;
