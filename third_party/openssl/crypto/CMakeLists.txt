@@ -4,8 +4,15 @@ else()
 ENABLE_LANGUAGE(ASM)
 endif()
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include/ ../include)
+include_directories(
+	${CMAKE_CURRENT_SOURCE_DIR}
+	${CMAKE_CURRENT_SOURCE_DIR}/include/
+	../include
+)
 
+include_directories(ec)
+include_directories(ec/curve448)
+include_directories(ec/curve448/arch_32)
 include_directories(asn1)
 include_directories(evp)
 include_directories(modes)

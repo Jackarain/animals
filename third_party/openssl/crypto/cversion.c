@@ -9,7 +9,7 @@
 
 #include "internal/cryptlib.h"
 
-#include "internal/buildinf.h"
+#include "buildinf.h"
 
 unsigned long OpenSSL_version_num(void)
 {

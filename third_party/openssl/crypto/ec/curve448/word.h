@@ -10,14 +10,14 @@
  * Originally written by Mike Hamburg
  */
 
-#ifndef HEADER_WORD_H
-# define HEADER_WORD_H
+#ifndef OSSL_CRYPTO_EC_CURVE448_WORD_H
+# define OSSL_CRYPTO_EC_CURVE448_WORD_H
 
 # include <string.h>
 # include <assert.h>
 # include <stdlib.h>
 # include <openssl/e_os2.h>
-# include "arch_32/arch_intrinsics.h"
+# include "arch_intrinsics.h"
 # include "curve448utils.h"
 
 # if (ARCH_WORD_BITS == 64)
@@ -78,4 +78,4 @@ static ossl_inline mask_t bool_to_mask(c448_bool_t m)
     return ret;
 }
 
-#endif                          /* HEADER_WORD_H */
+#endif                          /* OSSL_CRYPTO_EC_CURVE448_WORD_H */
