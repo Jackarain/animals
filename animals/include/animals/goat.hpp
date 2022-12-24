@@ -351,7 +351,7 @@ namespace animals
 					}
 
 					m_ssl_ctx->set_verify_callback(
-						boost::asio::ssl::rfc2818_verification(host), ec);
+						net::ssl::rfc2818_verification(host), ec);
 					if (ec)
 						co_return ec;
 				}
