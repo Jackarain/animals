@@ -13,7 +13,6 @@ target_sources(animals
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/animals.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/goat.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/uncia.hpp
-	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/default_cert.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/http_last_modified.hpp
 )
 

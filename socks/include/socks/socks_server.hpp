@@ -16,6 +16,7 @@
 #include "utils/async_connect.hpp"
 #include "utils/logging.hpp"
 #include "utils/base_stream.hpp"
+#include "utils/default_cert.hpp"
 
 #include "socks/socks_enums.hpp"
 #include "socks/socks_client.hpp"
@@ -1044,19 +1045,50 @@ namespace socks {
 					}
 				}
 
-				auto instantiate_stream = [this, &remote_socket, &ec]() mutable
+				auto instantiate_stream =
+					[this, &proxy_host, &remote_socket, &ec]() mutable
 					-> net::awaitable<socks_stream_type>
 				{
 					ec = {};
 
 					if (m_option.next_proxy_use_ssl_)
 					{
+						m_ssl_context.set_verify_mode(net::ssl::verify_peer);
+
+						auto cert = default_root_certificates();
+						m_ssl_context.add_certificate_authority(
+							net::buffer(cert.data(), cert.size()),
+							ec);
+						if (ec)
+						{
+							LOG_WFMT("socks id: {},"
+								" add_certificate_authority error: {}",
+								m_connection_id, ec.message());
+						}
+
+						m_ssl_context.set_verify_callback(
+							net::ssl::rfc2818_verification(proxy_host), ec);
+						if (ec)
+						{
+							LOG_WFMT("socks id: {},"
+								" set_verify_callback error: {}",
+								m_connection_id, ec.message());
+						}
+
 						auto socks_stream = instantiate_socks_stream(
 							std::move(remote_socket), m_ssl_context);
 
 						// get origin ssl stream type.
 						ssl_stream& ssl_socket =
 							boost::variant2::get<ssl_stream>(socks_stream);
+
+						if (!SSL_set_tlsext_host_name(
+							ssl_socket.native_handle(), proxy_host.c_str()))
+						{
+							LOG_WFMT("socks id: {},"
+								" SSL_set_tlsext_host_name error: {}",
+								m_connection_id, ::ERR_get_error());
+						}
 
 						// do async handshake.
 						co_await ssl_socket.async_handshake(
@@ -1209,9 +1241,9 @@ Connection: close
 		void init_ssl_context()
 		{
 			m_ssl_context.set_options(
-				boost::asio::ssl::context::default_workarounds
-				| boost::asio::ssl::context::no_sslv2
-				| boost::asio::ssl::context::single_dh_use);
+				net::ssl::context::default_workarounds
+				| net::ssl::context::no_sslv2
+				| net::ssl::context::single_dh_use);
 
 			auto dir = std::filesystem::path(m_option.ssl_cert_path_);
 			auto pwd = dir / "ssl_crt.pwd";
@@ -1234,7 +1266,7 @@ Connection: close
 
 			if (std::filesystem::exists(key))
 				m_ssl_context.use_private_key_file(
-					key.string(), boost::asio::ssl::context::pem);
+					key.string(), net::ssl::context::pem);
 
 			if (std::filesystem::exists(dh))
 				m_ssl_context.use_tmp_dh_file(dh.string());

@@ -10,11 +10,11 @@
 #include "utils/misc.hpp"
 #include "utils/url_view.hpp"
 #include "utils/async_connect.hpp"
+#include "utils/default_cert.hpp"
 
 #include "socks/socks_client.hpp"
 
 #include "animals/http_last_modified.hpp"
-#include "animals/default_cert.hpp"
 
 #include "animals/animals.hpp"
 
