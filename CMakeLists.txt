@@ -82,7 +82,7 @@ option(ENABLE_MOLD "build using mold" OFF)
 option(ENABLE_LLD "build using lld" OFF)
 
 option(ENABLE_BUILD_TESTS "build animals's unit tests" OFF)
-option(LINKE_TO_LIBATOMIC "link to libatomic.so - some platform requires it" OFF)
+option(ENABLE_LINKE_TO_LIBATOMIC "link to libatomic.so - some platform requires it" OFF)
 
 ################################################################################
 
@@ -385,14 +385,17 @@ endif()
 
 if (WIN32 OR NOT ENABLE_SYSTEM_ZLIB)
 	add_subdirectory(third_party/zlib EXCLUDE_FROM_ALL)
+
 	set(ZLIB_LIBRARIES zlibstatic)
-	set(ZLIB_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib/contrib/minizip)
+	set(ZLIB_INCLUDE_DIRS
+		${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib
+		${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib/contrib/minizip
+	)
 else()
 	find_package(ZLIB REQUIRED)
 endif()
 
 ################################################################################
-
 
 add_subdirectory(third_party/fmt)
 
@@ -458,7 +461,7 @@ elseif (UNIX AND NOT APPLE)
 	)
 endif()
 
-if (LINKE_TO_LIBATOMIC)
+if (ENABLE_LINKE_TO_LIBATOMIC)
 	link_libraries(atomic)
 endif()
 

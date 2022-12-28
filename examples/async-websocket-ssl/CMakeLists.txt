@@ -16,10 +16,7 @@ if (ENABLE_MIMALLOC_STATIC)
 endif()
 
 target_link_libraries(async_websocket_ssl
-	Boost::asio
-	Boost::beast
-
-	animals
+	${ANIMALS_LIBRARIES}
 )
 
 if (MSVC AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 19.29.30129 AND CMAKE_VERSION VERSION_GREATER 3.20.3)
