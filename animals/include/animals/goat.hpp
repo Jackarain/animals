@@ -12,7 +12,8 @@
 #include "utils/async_connect.hpp"
 #include "utils/default_cert.hpp"
 
-#include "socks/socks_client.hpp"
+#include "proxy/socks_client.hpp"
+#include "proxy/http_proxy_client.hpp"
 
 #include "animals/http_last_modified.hpp"
 
@@ -674,8 +675,8 @@ namespace animals
 
 		template<class S>
 		net::awaitable<boost::system::error_code>
-		do_proxy(S& stream, const std::string& proxy_url,
-			const std::string& host, const std::string& port)
+			do_proxy(S& stream, const std::string& proxy_url,
+				const std::string& host, const std::string& port)
 		{
 			urls::url_view url;
 			boost::system::error_code ec;
@@ -688,108 +689,70 @@ namespace animals
 				co_return ec;
 			}
 
+			auto scheme = url.scheme();
+			if (!scheme.starts_with("socks") && !scheme.starts_with("http"))
+			{
+				ec = net::error::make_error_code(
+					net::error::invalid_argument);
+				co_return ec;
+			}
+
+			std::string proxy_host(url.host());
+			std::string proxy_port(url.port());
+			if (proxy_port.empty())
+				proxy_port = "1080";
+
+			// These objects perform our I/O
+			tcp::resolver resolver(m_executor);
+
+			auto const socks_results =
+				co_await resolver.async_resolve(
+					proxy_host, proxy_port, net_awaitable[ec]);
+			if (ec)
+				co_return ec;
+
+			auto& socket = get_lowest_layer(stream).socket();
+
+			co_await asio_util::async_connect(
+				socket,
+				socks_results,
+				net_awaitable[ec]);
+			if (ec)
+				co_return ec;
+
 			if (url.scheme().starts_with("socks"))
 			{
-				std::string socks_host(url.host());
-				std::string socks_port(url.port());
-				if (socks_port.empty())
-					socks_port = "1080";
-
-				// These objects perform our I/O
-				tcp::resolver resolver(m_executor);
-
-				auto const socks_results =
-					co_await resolver.async_resolve(
-						socks_host, socks_port, net_awaitable[ec]);
-				if (ec)
-					co_return ec;
-
-				auto& socket = get_lowest_layer(stream).socket();
-
-				co_await asio_util::async_connect(
-					socket,
-					socks_results,
-					net_awaitable[ec]);
-				if (ec)
-					co_return ec;
-
-				socks::socks_client_option opt;
+				proxy::socks_client_option opt;
 
 				opt.target_host = host;
-				opt.target_port = atoi(port.c_str());
+				opt.target_port = std::atoi(port.c_str());
 				opt.proxy_hostname = true;
 				opt.username = url.username();
 				opt.password = url.password();
 
 				if (url.scheme() == "socks5")
-					opt.version = socks::socks5_version;
+					opt.version = proxy::socks5_version;
 				else if (url.scheme() == "socks4")
-					opt.version = socks::socks4_version;
+					opt.version = proxy::socks4_version;
 				else if (url.scheme() == "socks4a")
-					opt.version = socks::socks4a_version;
+					opt.version = proxy::socks4a_version;
 
-				co_await socks::async_socks_handshake(
+				co_await proxy::async_socks_handshake(
 					socket, opt, net_awaitable[ec]);
 
 				co_return ec;
 			}
 			else if (proxy_url.starts_with("http"))
 			{
-				std::string proxy_host(url.host());
-				std::string proxy_port(url.port());
+				proxy::http_proxy_client_option opt;
 
-				// Default http proxy port: 1080
-				if (proxy_port.empty())
-					proxy_port = "1080";
+				opt.target_host = host;
+				opt.target_port = std::atoi(port.c_str());
+				opt.username = url.username();
+				opt.password = url.password();
 
-				// These objects perform our I/O
-				tcp::resolver resolver(m_executor);
-
-				auto const proxy_results =
-					co_await resolver.async_resolve(
-						proxy_host, proxy_port, net_awaitable[ec]);
-				if (ec)
-					co_return ec;
-
-				auto& socket = get_lowest_layer(stream).socket();
-
-				co_await asio_util::async_connect(
-					socket,
-					proxy_results,
-					net_awaitable[ec]);
-				if (ec)
-					co_return ec;
-
-				auto target = host + ":" + port;
-				http_request req{ animals::http::verb::connect, target, 11};
-				req.set(http::field::proxy_connection, "Keep-Alive");
-				req.set(http::field::host, target);
-				req.set(http::field::user_agent, ANIMALS_VERSION_STRING);
-
-				if (!url.username().empty())
-				{
-					auto userinfo = std::string(url.username())
-						+ ":"
-						+ std::string(url.password());
-					req.set(http::field::proxy_authorization,
-						base64_encode(userinfo));
-				}
-
-				http::serializer<true, http::string_body> sr(req);
-				co_await http::async_write_header(socket, sr, net_awaitable[ec]);
-				if (ec)
-					co_return ec;
-
-				http::response_parser<
-					http_response::body_type> p;
-				boost::beast::flat_buffer buffer{ 1024 };
-
-				do {
-					co_await http::async_read_header(
-						socket, buffer, p, net_awaitable[ec]);
-					if (ec)
-						co_return ec;
-				} while (!p.is_header_done());
+				co_await proxy::async_http_proxy_handshake(
+					socket, opt, net_awaitable[ec]);
 
 				co_return ec;
 			}

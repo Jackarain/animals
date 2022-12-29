@@ -402,7 +402,7 @@ add_subdirectory(third_party/fmt)
 ################################################################################
 
 add_subdirectory(utils)
-add_subdirectory(socks)
+add_subdirectory(proxy)
 add_subdirectory(animals)
 
 
@@ -411,7 +411,7 @@ add_subdirectory(animals)
 include_directories(third_party
 	${ZLIB_INCLUDE_DIRS}
 	${UTILS_INCLUDE_DIRS}
-	${SOCKS_INCLUDE_DIRS}
+	${PROXY_INCLUDE_DIRS}
 	${ANIMALS_INCLUDE_DIRS}
 )
 

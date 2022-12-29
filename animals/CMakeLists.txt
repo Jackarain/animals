@@ -14,6 +14,8 @@ target_sources(animals
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/goat.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/uncia.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/animals/http_last_modified.hpp
+
+	${CMAKE_CURRENT_SOURCE_DIR}/src/dummy.cpp
 )
 
 target_include_directories(animals
@@ -29,6 +31,14 @@ target_link_libraries(animals
 	fmt
 	${OPENSSL_LIBRARIES}
 )
+
+if (MSVC AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 19.29.30129 AND CMAKE_VERSION VERSION_GREATER 3.20.3)
+	set_property(TARGET animals PROPERTY CXX_STANDARD 23)
+	message(STATUS "animals set cxx standard: C++23")
+else()
+	set_property(TARGET animals PROPERTY CXX_STANDARD 20)
+	message(STATUS "animals set cxx standard: C++20")
+endif()
 
 set(ANIMALS_INCLUDE_DIRS
 	${CMAKE_CURRENT_SOURCE_DIR}/include

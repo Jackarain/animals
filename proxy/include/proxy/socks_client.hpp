@@ -10,11 +10,11 @@
 
 #pragma once
 
-#include "socks/socks_error_code.hpp"
-#include "socks/socks_enums.hpp"
-#include "socks/socks_io.hpp"
+#include "proxy/socks_error_code.hpp"
+#include "proxy/socks_enums.hpp"
+#include "proxy/socks_io.hpp"
 
-#include "utils/asio_util.hpp"
+#include "proxy/use_awaitable.hpp"
 
 #include <cstdlib>
 #include <string>
@@ -32,7 +32,8 @@
 #include <boost/asio/write.hpp>
 
 
-namespace socks {
+namespace proxy {
+
 	namespace net = boost::asio;
 
 	using net::ip::tcp;
@@ -72,10 +73,10 @@ namespace socks {
 			socks_client_option opt,
 			boost::system::error_code& ec)
 		{
-			auto& username = opt.username;
-			auto& passwd = opt.password;
-			auto& hostname = opt.target_host;
-			auto& port = opt.target_port;
+			[[maybe_unused]] auto& username = opt.username;
+			[[maybe_unused]] auto& passwd = opt.password;
+			[[maybe_unused]] auto& hostname = opt.target_host;
+			[[maybe_unused]] auto& port = opt.target_port;
 
 			std::size_t bytes_to_write = username.empty() ? 3 : 4;
 			net::streambuf request;
@@ -104,14 +105,20 @@ namespace socks {
 			}
 
 			request.commit(bytes_to_write);
-			[[maybe_unused]] auto bytes = co_await net::async_write(
-				socket, request, net_awaitable[ec]);
+			[[maybe_unused]] auto bytes =
+				co_await net::async_write(
+					socket,
+					request,
+					net_awaitable[ec]);
 			if (ec) co_return;
 			BOOST_ASSERT(bytes_to_write == bytes);
 
 			net::streambuf response;
-			bytes = co_await net::async_read(socket, response,
-				net::transfer_exactly(2), net_awaitable[ec]);
+			bytes = co_await net::async_read(
+				socket,
+				response,
+				net::transfer_exactly(2),
+				net_awaitable[ec]);
 			if (ec) co_return;
 			BOOST_ASSERT(response.size() == 2);
 
@@ -122,7 +129,7 @@ namespace socks {
 
 			if (version != SOCKS_VERSION_5)
 			{
-				ec = socks::errc::socks_unsupported_version;
+				ec = proxy::errc::socks_unsupported_version;
 				co_return;
 			}
 
@@ -130,7 +137,7 @@ namespace socks {
 			{
 				if (username.empty())
 				{
-					ec = socks::errc::socks_username_required;
+					ec = proxy::errc::socks_username_required;
 					co_return;
 				}
 
@@ -160,13 +167,18 @@ namespace socks {
 
 				// write username & password.
 				bytes = co_await net::async_write(
-					socket, request, net_awaitable[ec]);
+					socket,
+					request,
+					net_awaitable[ec]);
 				if (ec) co_return;
 				BOOST_ASSERT(bytes_to_write == bytes);
 
 				response.consume(response.size());
-				bytes = co_await net::async_read(socket, response,
-					net::transfer_exactly(2), net_awaitable[ec]);
+				bytes = co_await net::async_read(
+					socket,
+					response,
+					net::transfer_exactly(2),
+					net_awaitable[ec]);
 				if (ec) co_return;
 				BOOST_ASSERT(response.size() == 2);
 
@@ -175,7 +187,7 @@ namespace socks {
 				auto status = read<uint8_t>(resp);
 				if (version != 0x01)	// auth version.
 				{
-					ec = socks::errc::socks_unsupported_authentication_version;
+					ec = proxy::errc::socks_unsupported_authentication_version;
 					co_return;
 				}
 
@@ -187,11 +199,11 @@ namespace socks {
 			}
 			else if (method == SOCKS5_AUTH_NONE) // no need auth...
 			{
-				co_await net::this_coro::executor;
+				// co_await net::this_coro::executor;
 			}
 			else
 			{
-				ec = socks::errc::socks_unsupported_authentication_version;
+				ec = proxy::errc::socks_unsupported_authentication_version;
 				co_return;
 			}
 
@@ -234,7 +246,9 @@ namespace socks {
 
 					auto target_endpoints =
 						co_await resolver.async_resolve(
-							hostname, std::to_string(port), net_awaitable[ec]);
+							hostname,
+							std::to_string(port),
+							net_awaitable[ec]);
 					if (ec) co_return;
 
 					if (target_endpoints.empty())
@@ -266,13 +280,18 @@ namespace socks {
 
 			request.commit(bytes_to_write);
 			bytes = co_await net::async_write(
-				socket, request, net_awaitable[ec]);
+				socket,
+				request,
+				net_awaitable[ec]);
 			if (ec) co_return;
 			BOOST_ASSERT(bytes_to_write == bytes);
 
 			response.consume(response.size());
-			bytes = co_await net::async_read(socket, response,
-				net::transfer_exactly(10), net_awaitable[ec]);
+			bytes = co_await net::async_read(
+				socket,
+				response,
+				net::transfer_exactly(10),
+				net_awaitable[ec]);
 			if (ec) co_return;
 			BOOST_ASSERT(response.size() == bytes);
 
@@ -287,28 +306,29 @@ namespace socks {
 				ec = errc::socks_unsupported_version;
 				co_return;
 			}
-
-			if (atyp != SOCKS5_ATYP_IPV4 &&
+			else if (atyp != SOCKS5_ATYP_IPV4 &&
 				atyp != SOCKS5_ATYP_DOMAINNAME &&
 				atyp != SOCKS5_ATYP_IPV6)
 			{
 				ec = errc::socks_general_failure;
 				co_return;
 			}
-
-			if (atyp == SOCKS5_ATYP_DOMAINNAME)
+			else if (atyp == SOCKS5_ATYP_DOMAINNAME)
 			{
 				auto domain_length = read<uint8_t>(resp);
 
-				bytes = co_await net::async_read(socket, response,
-					net::transfer_exactly(domain_length - 3), net_awaitable[ec]);
+				bytes = co_await net::async_read(socket,
+					response,
+					net::transfer_exactly(domain_length - 3),
+					net_awaitable[ec]);
 				if (ec) co_return;
 			}
-
-			if (atyp == SOCKS5_ATYP_IPV6)
+			else if (atyp == SOCKS5_ATYP_IPV6)
 			{
-				bytes = co_await net::async_read(socket, response,
-					net::transfer_exactly(12), net_awaitable[ec]);
+				bytes = co_await net::async_read(socket,
+					response,
+					net::transfer_exactly(12),
+					net_awaitable[ec]);
 				if (ec) co_return;
 			}
 
@@ -402,7 +422,9 @@ namespace socks {
 				auto error = ec;
 
 				auto target_endpoints = co_await resolver.async_resolve(
-					hostname, std::to_string(port), net_awaitable[ec]);
+					hostname,
+					std::to_string(port),
+					net_awaitable[ec]);
 				if (ec) co_return;
 
 				if (target_endpoints.empty())
@@ -435,12 +457,18 @@ namespace socks {
 			}
 
 			request.commit(bytes_to_write);
-			co_await net::async_write(socket, request, net_awaitable[ec]);
+			co_await net::async_write(
+				socket,
+				request,
+				net_awaitable[ec]);
 			if (ec) co_return;
 
 			net::streambuf response;
-			co_await net::async_read(socket, response,
-				net::transfer_exactly(8), net_awaitable[ec]);
+			co_await net::async_read(
+				socket,
+				response,
+				net::transfer_exactly(8),
+				net_awaitable[ec]);
 			if (ec) co_return;
 
 			auto resp = static_cast<const unsigned char*>(
@@ -489,20 +517,20 @@ namespace socks {
 			}
 			else
 			{
-				ec = socks::errc::socks_unsupported_version;
+				ec = proxy::errc::socks_unsupported_version;
 			}
 
 			co_return ec;
 		}
 
-		struct initiate_do_something
+		struct initiate_do_socks_proxy
 		{
 			template <typename Stream, typename Handler>
 			void operator()(Handler&& handler,
 				Stream* socket, socks_client_option opt) const
 			{
 				auto executor = net::get_associated_executor(handler);
-				co_spawn(executor,
+				net::co_spawn(executor,
 				[socket, opt = opt, handler = std::move(handler)]
 				() mutable -> net::awaitable<void>
 				{
@@ -521,7 +549,7 @@ namespace socks {
 	{
 		return net::async_initiate<Handler,
 			void(boost::system::error_code)>(
-				detail::initiate_do_something(), handler, &socket, opt);
+				detail::initiate_do_socks_proxy(), handler, &socket, opt);
 	}
 
 }
