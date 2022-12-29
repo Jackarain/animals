@@ -8,7 +8,6 @@
 #pragma once
 
 #include "utils/misc.hpp"
-#include "utils/url_view.hpp"
 #include "utils/async_connect.hpp"
 #include "utils/default_cert.hpp"
 
@@ -23,6 +22,8 @@
 
 #include <boost/smart_ptr/local_shared_ptr.hpp>
 #include <boost/smart_ptr/make_local_shared.hpp>
+
+#include <boost/url.hpp>
 
 #ifndef ANIMALS_VERSION_STRING
 #  define ANIMALS_VERSION_STRING         "animals/1.0"
@@ -41,6 +42,8 @@ namespace animals
 	namespace http = beast::http;           // from <boost/beast/http.hpp>
 
 	using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
+
+	namespace urls = boost::urls;			// form <boost/url.hpp>
 
 	using namespace std::literals;
 	using namespace std::chrono;
@@ -248,18 +251,18 @@ namespace animals
 				const std::string& url, std::string proxy_url)
 		{
 			boost::system::error_code ec;
-			urls::url_view parser;
+			m_url = url;
 
-			// Parser url.
-			if (!parser.parse(url))
+			auto rv = boost::urls::parse_uri(url);
+			if (!rv)
 			{
 				ec = net::error::make_error_code(
 					net::error::invalid_argument);
 				co_return ec;
 			}
 
-			m_url = url;
-			std::string host(parser.host());
+			auto uv = rv.value();
+			std::string host(uv.host());
 
 			// check request params.
 			auto host_it = req.find(http::field::host);
@@ -276,19 +279,19 @@ namespace animals
 			if (req.target() == "")
 			{
 				std::string query;
-				if (parser.query() != "")
+				if (uv.query() != "")
 				{
-					auto q = std::string(parser.query());
+					auto q = std::string(uv.query());
 					if (q[0] == '?')
-						query = std::string(parser.query());
+						query = std::string(uv.query());
 					else
-						query = "?" + std::string(parser.query());
+						query = "?" + std::string(uv.query());
 				}
 
-				if (std::string(parser.path()) == "")
+				if (std::string(uv.path()) == "")
 					req.target("/" + query);
 				else
-					req.target(std::string(parser.path()) + query);
+					req.target(std::string(uv.path()) + query);
 			}
 			if (req.method() == http::verb::post)
 			{
@@ -296,7 +299,7 @@ namespace animals
 					req.content_length(req.body().size());
 			}
 
-			if (beast::iequals(parser.scheme(), "https"))
+			if (beast::iequals(uv.scheme(), "https"))
 			{
 				m_ssl_ctx = std::make_unique<
 					net::ssl::context>(net::ssl::context::sslv23_client);
@@ -364,7 +367,7 @@ namespace animals
 
 				auto& stream = *(boost::variant2::get<ssl_stream_ptr>(m_stream));
 
-				std::string port(parser.port());
+				std::string port(uv.port());
 				if (port.empty())
 					port = "443";
 
@@ -373,7 +376,9 @@ namespace animals
 				// Look up the domain name
 				auto const results =
 					co_await resolver.async_resolve(
-						host, port, net_awaitable[ec]);
+						host,
+						port,
+						net_awaitable[ec]);
 				if (ec)
 					co_return ec;
 
@@ -383,7 +388,11 @@ namespace animals
 
 				if (!proxy_url.empty())
 				{
-					ec = co_await do_proxy(stream, proxy_url, host, port);
+					ec = co_await do_proxy(
+						stream,
+						proxy_url,
+						host,
+						port);
 					if (ec)
 						co_return ec;
 
@@ -422,9 +431,9 @@ namespace animals
 				beast::get_lowest_layer(stream).expires_after(
 					std::chrono::seconds(30));
 			}
-			else if (beast::iequals(parser.scheme(), "http"))
+			else if (beast::iequals(uv.scheme(), "http"))
 			{
-				std::string port(parser.port());
+				std::string port(uv.port());
 				if (port.empty())
 					port = "80";
 
@@ -678,18 +687,19 @@ namespace animals
 			do_proxy(S& stream, const std::string& proxy_url,
 				const std::string& host, const std::string& port)
 		{
-			urls::url_view url;
 			boost::system::error_code ec;
 
-			// Parser socks url.
-			if (!url.parse(proxy_url))
+			auto rv = boost::urls::parse_uri(proxy_url);
+			if (!rv)
 			{
 				ec = net::error::make_error_code(
 					net::error::invalid_argument);
 				co_return ec;
 			}
 
+			auto url = rv.value();
 			auto scheme = url.scheme();
+
 			if (!scheme.starts_with("socks") && !scheme.starts_with("http"))
 			{
 				ec = net::error::make_error_code(
@@ -727,7 +737,7 @@ namespace animals
 				opt.target_host = host;
 				opt.target_port = std::atoi(port.c_str());
 				opt.proxy_hostname = true;
-				opt.username = url.username();
+				opt.username = url.user();
 				opt.password = url.password();
 
 				if (url.scheme() == "socks5")
@@ -748,7 +758,7 @@ namespace animals
 
 				opt.target_host = host;
 				opt.target_port = std::atoi(port.c_str());
-				opt.username = url.username();
+				opt.username = url.user();
 				opt.password = url.password();
 
 				co_await proxy::async_http_proxy_handshake(

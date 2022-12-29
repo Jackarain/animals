@@ -1,7 +1,6 @@
 ﻿#include "utils/logging.hpp"
 
 #include "animals/animals.hpp"
-#include "utils/url_view.hpp"
 namespace net = boost::asio;
 
 int main(int argc, char** argv)
@@ -15,7 +14,7 @@ int main(int argc, char** argv)
 	std::string_view url(argv[1]);
 
 	try {
-		urls::url_view{ url };
+		animals::urls::url_view{ url };
 	}
 	catch (const std::exception& e)
 	{

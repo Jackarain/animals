@@ -422,7 +422,9 @@ link_libraries(
 		Boost::thread
 		Boost::date_time
 		Boost::program_options
+
 		Boost::json
+		Boost::url
 
 		fmt
 

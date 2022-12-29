@@ -8,7 +8,6 @@
 #pragma once
 
 #include "utils/misc.hpp"
-#include "utils/url_view.hpp"
 #include "utils/async_connect.hpp"
 #include "utils/default_cert.hpp"
 
@@ -18,6 +17,7 @@
 #include "animals/animals.hpp"
 
 #include <boost/variant2.hpp>
+#include <boost/url.hpp>
 
 #ifndef ANIMALS_VERSION_STRING
 #  define ANIMALS_VERSION_STRING         "animals/1.0"
@@ -255,22 +255,22 @@ namespace animals
 			const std::string& url, std::string proxy_url)
 		{
 			boost::system::error_code ec;
-			urls::url_view parser;
+			m_url = url;
 
-			// Parser url.
-			if (!parser.parse(url))
+			auto rv = boost::urls::parse_uri(url);
+			if (!rv)
 			{
 				ec = net::error::make_error_code(
 					net::error::invalid_argument);
 				co_return ec;
 			}
 
-			m_url = url;
+			auto uv = rv.value();
 
-			std::string host(parser.host());
-			std::string port(parser.port());
+			std::string host(uv.host());
+			std::string port(uv.port());
 
-			if (beast::iequals(parser.scheme(), "ws"))
+			if (beast::iequals(uv.scheme(), "ws"))
 			{
 				if (port.empty())
 					port = "80";
@@ -315,7 +315,7 @@ namespace animals
 
 				beast::get_lowest_layer(stream).expires_never();
 			}
-			else if (beast::iequals(parser.scheme(), "wss"))
+			else if (beast::iequals(uv.scheme(), "wss"))
 			{
 				m_ssl_ctx = std::make_unique<
 					net::ssl::context>(net::ssl::context::sslv23_client);
@@ -446,7 +446,7 @@ namespace animals
 			}
 
 			auto hostname = host + ":" + port;
-			auto target = parser.path();
+			auto target = uv.path();
 
 			if (auto wsp = boost::variant2::get_if<ws_stream_ptr>(&m_stream))
 			{
@@ -494,21 +494,22 @@ namespace animals
 
 		template<class S>
 		net::awaitable<boost::system::error_code>
-		do_proxy(S& stream, const std::string& proxy_url,
-			const std::string& host, const std::string& port)
+			do_proxy(S& stream, const std::string& proxy_url,
+				const std::string& host, const std::string& port)
 		{
-			urls::url_view url;
 			boost::system::error_code ec;
 
-			// Parser socks url.
-			if (!url.parse(proxy_url))
+			auto rv = boost::urls::parse_uri(proxy_url);
+			if (!rv)
 			{
 				ec = net::error::make_error_code(
 					net::error::invalid_argument);
 				co_return ec;
 			}
 
+			auto url = rv.value();
 			auto scheme = url.scheme();
+
 			if (!scheme.starts_with("socks") && !scheme.starts_with("http"))
 			{
 				ec = net::error::make_error_code(
@@ -546,7 +547,7 @@ namespace animals
 				opt.target_host = host;
 				opt.target_port = std::atoi(port.c_str());
 				opt.proxy_hostname = true;
-				opt.username = url.username();
+				opt.username = url.user();
 				opt.password = url.password();
 
 				if (url.scheme() == "socks5")
@@ -567,7 +568,7 @@ namespace animals
 
 				opt.target_host = host;
 				opt.target_port = std::atoi(port.c_str());
-				opt.username = url.username();
+				opt.username = url.user();
 				opt.password = url.password();
 
 				co_await proxy::async_http_proxy_handshake(
@@ -580,6 +581,7 @@ namespace animals
 				net::error::invalid_argument);
 			co_return ec;
 		}
+
 
 	private:
 		executor_type m_executor;
