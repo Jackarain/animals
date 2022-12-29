@@ -9,8 +9,6 @@
 
 #include "utils/internal.hpp"
 
-#include "utils/url_view.hpp"
-
 // trim 一个string_view对象.
 std::string_view string_trim(std::string_view sv);
 std::string_view string_trim_left(std::string_view sv);
