@@ -4,7 +4,7 @@ if (WIN32)
 	cmake_policy(SET CMP0091 NEW) # for CMAKE_MSVC_RUNTIME_LIBRARY
 endif()
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-project(animals)
+project(animals LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
