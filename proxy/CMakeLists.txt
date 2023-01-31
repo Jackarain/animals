@@ -10,18 +10,11 @@ add_library(libproxy STATIC)
 
 target_sources(libproxy
 	PRIVATE
-	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/async_connect.hpp
-	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/base_stream.hpp
-	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/default_cert.hpp
-	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/fileop.hpp
-	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/logging.hpp
-	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/scoped_exit.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/socks_client.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/socks_enums.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/socks_error_code.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/socks_io.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/proxy_server.hpp
-	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/use_awaitable.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/include/proxy/http_proxy_client.hpp
 
 	${CMAKE_CURRENT_SOURCE_DIR}/src/dummy.cpp

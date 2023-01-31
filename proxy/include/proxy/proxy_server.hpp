@@ -10,16 +10,19 @@
 
 #pragma once
 
-#include "proxy/use_awaitable.hpp"
-#include "proxy/scoped_exit.hpp"
-#include "proxy/async_connect.hpp"
-#include "proxy/logging.hpp"
-#include "proxy/base_stream.hpp"
-#include "proxy/default_cert.hpp"
-#include "proxy/fileop.hpp"
+
+#include "utils/logging.hpp"
+#include "utils/asio_util.hpp"
+#include "utils/scoped_exit.hpp"
+#include "utils/async_connect.hpp"
+#include "utils/base_stream.hpp"
+#include "utils/default_cert.hpp"
+#include "utils/fileop.hpp"
+#include "utils/strutil.hpp"
 
 #include "proxy/socks_enums.hpp"
 #include "proxy/socks_client.hpp"
+#include "proxy/http_proxy_client.hpp"
 #include "proxy/socks_io.hpp"
 
 #include <memory>
@@ -39,12 +42,18 @@
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/beast/websocket.hpp>
 #include <boost/beast/ssl.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/beast/core/detail/base64.hpp>
 
 #include <boost/url.hpp>
+#include <boost/regex.hpp>
 
+#include <boost/nowide/convert.hpp>
+
+#include <fmt/xchar.h>
+#include <fmt/format.h>
 
 namespace proxy {
 
@@ -52,6 +61,7 @@ namespace proxy {
 
 	using namespace net::experimental::awaitable_operators;
 	using namespace util;
+	using namespace strutil;
 
 	using tcp = net::ip::tcp;               // from <boost/asio/ip/tcp.hpp>
 	using udp = net::ip::udp;               // from <boost/asio/ip/udp.hpp>
@@ -61,10 +71,24 @@ namespace proxy {
 
 	namespace urls = boost::urls;			// form <boost/url.hpp>
 
+	using string_body = http::string_body;
+	using dynamic_body = http::dynamic_body;
+	using buffer_body = http::buffer_body;
+
+	using dynamic_request = http::request<dynamic_body>;
+	using string_response = http::response<string_body>;
+	using buffer_response = http::response<buffer_body>;
+
+	using request_parser = http::request_parser<dynamic_request::body_type>;
+	using response_serializer = http::response_serializer<buffer_body, http::fields>;
+
 	using ssl_stream = net::ssl::stream<tcp::socket>;
 
 	using io_util::read;
 	using io_util::write;
+
+	const inline std::string version_string = "nginx/1.20.2";
+	const inline int udp_session_expired_time = 600;
 
 	// proxy server 参数选项.
 	struct proxy_server_option
@@ -90,6 +114,15 @@ namespace proxy {
 
 		// 使用ssl的时候, 指定证书目录.
 		std::string ssl_cert_path_;
+
+		// 指定允许的加密算法.
+		std::string ssl_ciphers_;
+
+		// 优先使用server端加密算法.
+		bool ssl_prefer_server_ciphers_;
+
+		// http doc 目录, 用于伪装成web站点.
+		std::string doc_directory_;
 	};
 
 	// proxy server 虚基类, 任何 proxy server 的实现, 必须基于这个基类.
@@ -120,12 +153,22 @@ namespace proxy {
 		proxy_session(const proxy_session&) = delete;
 		proxy_session& operator=(const proxy_session&) = delete;
 
+		struct http_context
+		{
+			std::vector<std::string> command_;
+			dynamic_request& request_;
+			request_parser& parser_;
+			beast::flat_buffer& buffer_;
+		};
+
 	public:
 		proxy_session(proxy_stream_type&& socket,
 			size_t id, std::weak_ptr<proxy_server_base> server)
 			: m_local_socket(std::move(socket))
 			, m_remote_socket(instantiate_proxy_stream(
 				m_local_socket.get_executor()))
+			, m_udp_socket(m_local_socket.get_executor())
+			, m_timer(m_local_socket.get_executor())
 			, m_connection_id(id)
 			, m_proxy_server(server)
 		{
@@ -138,6 +181,8 @@ namespace proxy {
 				return;
 
 			server->remove_client(m_connection_id);
+
+			LOG_DBG << "socks id: " << m_connection_id << ", destroyed";
 		}
 
 	public:
@@ -158,9 +203,12 @@ namespace proxy {
 				}
 				catch (const std::exception& e)
 				{
-					LOG_ERR << "socks id: " << m_connection_id
-						<< ", params next_proxy error: " << m_option.next_proxy_
-						<< ", exception: " << e.what();
+					LOG_ERR << "socks id: "
+						<< m_connection_id
+						<< ", params next_proxy error: "
+						<< m_option.next_proxy_
+						<< ", exception: "
+						<< e.what();
 					return;
 				}
 			}
@@ -184,7 +232,7 @@ namespace proxy {
 		}
 
 	private:
-		net::awaitable<void> start_socks_proxy()
+		inline net::awaitable<void> start_socks_proxy()
 		{
 			// 保持整个生命周期在协程栈上.
 			auto self = shared_from_this();
@@ -241,11 +289,8 @@ namespace proxy {
 			}
 			if (socks_version == 'G')
 			{
-				co_await net::async_write(
-					m_local_socket,
-					net::buffer(fake_web_page()),
-					net::transfer_all(),
-					net_awaitable[ec]);
+				co_await web_server();
+				co_return;
 			}
 			else if (socks_version == 'C')
 			{
@@ -263,7 +308,7 @@ namespace proxy {
 			co_return;
 		}
 
-		net::awaitable<void> socks_connect_v5()
+		inline net::awaitable<void> socks_connect_v5()
 		{
 			auto p = net::buffer_cast<const char*>(m_local_buffer.data());
 
@@ -459,30 +504,22 @@ namespace proxy {
 				dst_endpoint.address(net::ip::address_v4(read<uint32_t>(p)));
 				dst_endpoint.port(read<uint16_t>(p));
 
+				domain = dst_endpoint.address().to_string();
+				port = dst_endpoint.port();
+
 				LOG_DBG << "socks id: " << m_connection_id
 					<< ", " << m_local_socket.remote_endpoint()
 					<< " use ipv4: " << dst_endpoint;
-
-				if (command == SOCKS_CMD_CONNECT)
-				{
-					co_await connect_host(
-						dst_endpoint.address().to_string(),
-						dst_endpoint.port(), ec);
-				}
 			}
 			else if (atyp == SOCKS5_ATYP_DOMAINNAME)
 			{
 				for (size_t i = 0; i < bytes - 2; i++)
 					domain.push_back(read<int8_t>(p));
 				port = read<uint16_t>(p);
+
 				LOG_DBG << "socks id: " << m_connection_id
 					<< ", " << m_local_socket.remote_endpoint()
 					<< " use domain: " << domain << ":" << port;
-
-				if (command == SOCKS_CMD_CONNECT)
-				{
-					co_await connect_host(domain, port, ec, true);
-				}
 			}
 			else if (atyp == SOCKS5_ATYP_IPV6)
 			{
@@ -495,18 +532,114 @@ namespace proxy {
 
 				dst_endpoint.address(net::ip::address_v6(addr));
 				dst_endpoint.port(read<uint16_t>(p));
+
+				domain = dst_endpoint.address().to_string();
+				port = dst_endpoint.port();
+
 				LOG_DBG << "socks id: " << m_connection_id
 					<< ", " << m_local_socket.remote_endpoint()
 					<< " use ipv6: " << dst_endpoint;
-
-				if (command == SOCKS_CMD_CONNECT)
-				{
-					co_await connect_host(
-						dst_endpoint.address().to_string(),
-						dst_endpoint.port(),
-						ec);
-				}
 			}
+
+			if (command == SOCKS_CMD_CONNECT)
+			{
+				// 连接目标主机.
+				co_await connect_host(
+					domain, port, ec, atyp == SOCKS5_ATYP_DOMAINNAME);
+			}
+			else if (command == SOCKS5_CMD_UDP)
+			do {
+				if (atyp == SOCKS5_ATYP_DOMAINNAME)
+				{
+					tcp::resolver resolver{ executor };
+
+					auto targets = co_await resolver.async_resolve(
+						domain,
+						std::to_string(port),
+						net_awaitable[ec]);
+					if (ec)
+						break;
+
+					for (const auto& target : targets)
+					{
+						dst_endpoint = target.endpoint();
+						break;
+					}
+				}
+
+				// 创建UDP端口.
+				auto protocol = dst_endpoint.address().is_v4()
+					? udp::v4() : udp::v6();
+				m_udp_socket.open(protocol, ec);
+				if (ec)
+					break;
+
+				m_udp_socket.bind(udp::endpoint(protocol, 0), ec);
+				if (ec)
+					break;
+
+				auto remote_endp = m_local_socket.remote_endpoint();
+
+				// 所有发向 udp socket 的数据, 都将转发到 m_client_endp
+				// 除非是 m_client_endp 本身除外.
+				m_client_endp.address(remote_endp.address());
+				m_client_endp.port(port);
+
+				LOG_DBG << "socks id: " << m_connection_id
+					<< ", udp client: " << m_client_endp;
+
+				// 开启udp socket数据接收, 并计时, 如果在一定时间内没有接收到数据包
+				// 则关闭 udp socket 等相关资源.
+				net::co_spawn(executor,
+					tick(), net::detached);
+
+				net::co_spawn(executor,
+					forward_udp(), net::detached);
+
+				wbuf.consume(wbuf.size());
+				auto wp = net::buffer_cast<char*>(
+					wbuf.prepare(64 + domain.size()));
+
+				write<uint8_t>(SOCKS_VERSION_5, wp);	// VER
+				write<uint8_t>(0, wp);					// REP
+				write<uint8_t>(0x00, wp);				// RSV
+
+				auto local_endp = m_udp_socket.local_endpoint(ec);
+				if (ec)
+					break;
+
+				if (local_endp.address().is_v4())
+				{
+					auto uaddr = local_endp.address().to_v4().to_uint();
+
+					write<uint8_t>(SOCKS5_ATYP_IPV4, wp);
+					write<uint32_t>(uaddr, wp);
+					write<uint16_t>(local_endp.port(), wp);
+				}
+				else if (local_endp.address().is_v6())
+				{
+					write<uint8_t>(SOCKS5_ATYP_IPV6, wp);
+					auto data = local_endp.address().to_v6().to_bytes();
+					for (auto c : data)
+						write<uint8_t>(c, wp);
+					write<uint16_t>(local_endp.port(), wp);
+				}
+
+				auto len = wp - net::buffer_cast<const char*>(wbuf.data());
+				wbuf.commit(len);
+				bytes = co_await net::async_write(m_local_socket,
+					wbuf,
+					net::transfer_exactly(len),
+					net_awaitable[ec]);
+				if (ec)
+				{
+					LOG_WARN << "socks id: " << m_connection_id
+						<< ", write server response error: " << ec.message();
+					co_return;
+				}
+
+				co_return;
+			} while (0);
 
 			// 连接成功或失败.
 			{
@@ -606,7 +739,177 @@ namespace proxy {
 			co_return;
 		}
 
-		net::awaitable<void> socks_connect_v4()
+		inline net::awaitable<void> forward_udp()
+		{
+			[[maybe_unused]] auto self = shared_from_this();
+			boost::system::error_code ec;
+			udp::endpoint remote_endp;
+			char read_buffer[4096];
+			const char* rbuf = &read_buffer[96];
+			char* wbuf = &read_buffer[86];
+			auto executor = co_await net::this_coro::executor;
+
+			while (!m_abort)
+			{
+				m_timeout = udp_session_expired_time;
+
+				auto bytes = co_await m_udp_socket.async_receive_from(
+					net::buffer(read_buffer, 1500),
+					remote_endp,
+					net_awaitable[ec]);
+				if (ec)
+				{
+					break;
+				}
+
+				auto rp = rbuf;
+
+				if (remote_endp.address() == m_client_endp.address())
+				{
+					//  +----+------+------+----------+-----------+----------+
+					//  |RSV | FRAG | ATYP | DST.ADDR | DST.PORT  |   DATA   |
+					//  +----+------+------+----------+-----------+----------+
+					//  | 2  |  1   |  1   | Variable |    2      | Variable |
+					//  +----+------+------+----------+-----------+----------+
+
+					// 去掉包头转发至远程主机.
+					read<uint16_t>(rp); // rsv
+					auto frag = read<uint8_t>(rp);  // frag
+
+					// 不支持udp分片.
+					if (frag != 0)
+						continue;
+
+					auto atyp = read<uint8_t>(rp);
+
+					if (atyp == SOCKS5_ATYP_IPV4)
+					{
+						remote_endp.address(
+							net::ip::address_v4(read<uint32_t>(rp)));
+						remote_endp.port(read<uint16_t>(rp));
+					}
+					else if (atyp == SOCKS5_ATYP_DOMAINNAME)
+					{
+						auto length = read<uint8_t>(rp);
+						std::string domain;
+
+						for (size_t i = 0; i < length; i++)
+							domain.push_back(read<int8_t>(rp));
+						auto port = read<uint16_t>(rp);
+
+						udp::resolver resolver{ executor };
+
+						auto targets =
+							co_await resolver.async_resolve(
+							domain,
+							std::to_string(port),
+							net_awaitable[ec]);
+						if (ec)
+							break;
+
+						for (const auto& target : targets)
+						{
+							remote_endp = target.endpoint();
+							break;
+						}
+					}
+					else if (atyp == SOCKS5_ATYP_IPV6)
+					{
+						net::ip::address_v6::bytes_type addr;
+						for (auto i = addr.begin();
+							i != addr.end(); ++i)
+						{
+							*i = read<int8_t>(rp);
+						}
+
+						remote_endp.address(net::ip::address_v6(addr));
+						remote_endp.port(read<uint16_t>(rp));
+					}
+
+					auto head_size = rp - rbuf;
+					auto udp_size = bytes - head_size;
+
+					co_await m_udp_socket.async_send_to(
+						net::buffer(rp, udp_size),
+						remote_endp,
+						net_awaitable[ec]);
+				}
+				else
+				{
+					auto wp = wbuf;
+
+					if (remote_endp.address().is_v6())
+						wp = wbuf - 12;
+
+					write<uint16_t>(0x0, wp); // rsv
+					write<uint8_t>(0x0, wp); // frag
+
+					if (remote_endp.address().is_v4())
+					{
+						auto uaddr = remote_endp.address().to_v4().to_uint();
+						write<uint8_t>(SOCKS5_ATYP_IPV4, wp); // atyp
+
+						write<uint32_t>(uaddr, wp);
+						write<uint16_t>(remote_endp.port(), wp);
+					}
+					if (remote_endp.address().is_v6())
+					{
+						write<uint8_t>(SOCKS5_ATYP_IPV6, wp); // atyp
+
+						auto data = remote_endp.address().to_v6().to_bytes();
+						for (auto c : data)
+							write<uint8_t>(c, wp);
+						write<uint16_t>(remote_endp.port(), wp);
+					}
+
+					auto head_size = wp - wbuf;
+					auto udp_size = bytes + head_size;
+
+					co_await m_udp_socket.async_send_to(
+						net::buffer(wbuf, udp_size),
+						m_client_endp,
+						net_awaitable[ec]);
+				}
+			}
+
+			LOG_DBG << "socks id: " << m_connection_id
+				<< ", forward_udp quit";
+
+			co_return;
+		}
+
+		inline net::awaitable<void> tick()
+		{
+			[[maybe_unused]] auto self = shared_from_this();
+			boost::system::error_code ec;
+
+			while (!m_abort)
+			{
+				m_timer.expires_from_now(std::chrono::seconds(1));
+				co_await m_timer.async_wait(net_awaitable[ec]);
+				if (ec)
+				{
+					LOG_WARN << "socks id: " << m_connection_id
+						<< ", ec: " << ec.message();
+					break;
+				}
+
+				if (--m_timeout <= 0)
+				{
+					LOG_DBG << "socks id: " << m_connection_id
+						<< ", udp socket expired";
+					m_udp_socket.close(ec);
+					break;
+				}
+			}
+
+			LOG_DBG << "socks id: " << m_connection_id
+				<< ", udp expired timer quit";
+
+			co_return;
+		}
+
+		inline net::awaitable<void> socks_connect_v4()
 		{
 			auto self = shared_from_this();
 			auto p = net::buffer_cast<const char*>(m_local_buffer.data());
@@ -817,7 +1120,7 @@ namespace proxy {
 			co_return;
 		}
 
-		net::awaitable<bool> http_proxy_connect()
+		inline net::awaitable<bool> http_proxy_connect()
 		{
 			http::request<http::string_body> req;
 			boost::system::error_code ec;
@@ -956,7 +1259,7 @@ namespace proxy {
 			co_return true;
 		}
 
-		net::awaitable<bool> socks_auth()
+		inline net::awaitable<bool> socks_auth()
 		{
 			//  +----+------+----------+------+----------+
 			//  |VER | ULEN |  UNAME   | PLEN |  PASSWD  |
@@ -1135,7 +1438,7 @@ namespace proxy {
 			}
 		}
 
-		net::awaitable<void> connect_host(
+		inline net::awaitable<void> connect_host(
 			std::string target_host, uint16_t target_port,
 			boost::system::error_code& ec, bool resolve = false)
 		{
@@ -1229,13 +1532,19 @@ namespace proxy {
 					}
 				}
 
+				auto scheme = m_next_proxy->scheme();
+
 				auto instantiate_stream =
-					[this, &proxy_host, &remote_socket, &ec]
+					[this,
+					&scheme,
+					&proxy_host,
+					&remote_socket,
+					&ec]
 				() mutable -> net::awaitable<proxy_stream_type>
 				{
 					ec = {};
 
-					if (m_option.next_proxy_use_ssl_)
+					if (m_option.next_proxy_use_ssl_ || scheme == "https")
 					{
 						m_ssl_context.set_verify_mode(net::ssl::verify_peer);
 						auto cert = default_root_certificates();
@@ -1244,7 +1553,7 @@ namespace proxy {
 							ec);
 						if (ec)
 						{
-							LOG_WFMT("socks id: {},"
+							LOG_WFMT("proxy id: {},"
 								" add_certificate_authority error: {}",
 								m_connection_id, ec.message());
 						}
@@ -1253,7 +1562,7 @@ namespace proxy {
 							net::ssl::rfc2818_verification(proxy_host), ec);
 						if (ec)
 						{
-							LOG_WFMT("socks id: {},"
+							LOG_WFMT("proxy id: {},"
 								" set_verify_callback error: {}",
 								m_connection_id, ec.message());
 						}
@@ -1268,7 +1577,7 @@ namespace proxy {
 						if (!SSL_set_tlsext_host_name(
 							ssl_socket.native_handle(), proxy_host.c_str()))
 						{
-							LOG_WFMT("socks id: {},"
+							LOG_WFMT("proxy id: {},"
 							" SSL_set_tlsext_host_name error: {}",
 								m_connection_id, ::ERR_get_error());
 						}
@@ -1279,10 +1588,14 @@ namespace proxy {
 							net_awaitable[ec]);
 						if (ec)
 						{
-							LOG_WFMT("socks id: {},"
+							LOG_WFMT("proxy id: {},"
 								" ssl protocol handshake error: {}",
 								m_connection_id, ec.message());
 						}
+
+						LOG_FMT("proxy id: {}, ssl handshake: {}",
+							m_connection_id,
+							proxy_host);
 
 						co_return socks_stream;
 					}
@@ -1293,25 +1606,46 @@ namespace proxy {
 
 				m_remote_socket = std::move(co_await instantiate_stream());
 
-				socks_client_option opt;
+				if (scheme.starts_with("socks"))
+				{
+					socks_client_option opt;
 
-				opt.target_host = target_host;
-				opt.target_port = target_port;
-				opt.proxy_hostname = true;
-				opt.username = std::string(m_next_proxy->user());
-				opt.password = std::string(m_next_proxy->password());
+					opt.target_host = target_host;
+					opt.target_port = target_port;
+					opt.proxy_hostname = true;
+					opt.username = std::string(m_next_proxy->user());
+					opt.password = std::string(m_next_proxy->password());
 
-				if (m_next_proxy->scheme() == "socks4")
-					opt.version = socks4_version;
-				else if (m_next_proxy->scheme() == "socks4a")
-					opt.version = socks4a_version;
+					if (scheme == "socks4")
+						opt.version = socks4_version;
+					else if (scheme == "socks4a")
+						opt.version = socks4a_version;
 
-				co_await async_socks_handshake(
-					m_remote_socket, opt, net_awaitable[ec]);
+					co_await async_socks_handshake(
+						m_remote_socket,
+						opt,
+						net_awaitable[ec]);
+				}
+				else if (scheme.starts_with("http"))
+				{
+					http_proxy_client_option opt;
+
+					opt.target_host = target_host;
+					opt.target_port = target_port;
+					opt.username = std::string(m_next_proxy->user());
+					opt.password = std::string(m_next_proxy->password());
+
+					co_await async_http_proxy_handshake(
+						m_remote_socket,
+						opt,
+						net_awaitable[ec]);
+				}
+
 				if (ec)
 				{
-					LOG_WFMT("socks id: {},"
+					LOG_WFMT("{} id: {},"
 						" connect to next host {}:{} error: {}",
+						std::string(scheme),
 						m_connection_id,
 						target_host,
 						target_port,
@@ -1368,7 +1702,626 @@ namespace proxy {
 			co_return;
 		}
 
-		const std::string& fake_web_page() const
+		inline net::awaitable<void> web_server()
+		{
+			namespace fs = std::filesystem;
+
+			boost::system::error_code ec;
+
+			if (m_option.doc_directory_.empty())
+			{
+				co_await net::async_write(
+					m_local_socket,
+					net::buffer(fake_web_page()),
+					net::transfer_all(),
+					net_awaitable[ec]);
+				co_return;
+			}
+
+			beast::flat_buffer buffer;
+			buffer.reserve(5 * 1024 * 1024);
+
+			bool keep_alive = false;
+			for (; !m_abort;)
+			{
+				request_parser parser;
+				parser.body_limit(std::numeric_limits<uint64_t>::max());
+
+				co_await http::async_read_header(
+					m_local_socket,
+					buffer,
+					parser,
+					net_awaitable[ec]);
+				if (ec)
+				{
+					LOG_DBG << "start_web_connect, id: "
+						<< m_connection_id
+						<< ", async_read_header: "
+						<< ec.message();
+					co_return;
+				}
+
+				if (parser.get()[http::field::expect] == "100-continue")
+				{
+					http::response<http::empty_body> res;
+					res.version(11);
+					res.result(http::status::continue_);
+
+					co_await http::async_write(
+						m_local_socket,
+						res,
+						net_awaitable[ec]);
+					if (ec)
+					{
+						LOG_DBG << "start_web_connect, id: "
+							<< m_connection_id
+							<< ", expect async_write: "
+							<< ec.message();
+						co_return;
+					}
+				}
+
+				auto req = parser.release();
+				keep_alive = req.keep_alive();
+
+				if (beast::websocket::is_upgrade(req))
+				{
+					co_await net::async_write(
+						m_local_socket,
+						net::buffer(fake_web_page()),
+						net::transfer_all(),
+						net_awaitable[ec]);
+					co_return;
+				}
+
+				std::string target = req.target();
+				unescape(std::string(target), target);
+
+				boost::smatch what;
+				http_context http_ctx{ {}, req, parser, buffer };
+
+				#define BEGIN_HTTP_ROUTE() if (false) {}
+				#define ON_HTTP_ROUTE(exp, func) \
+				else if (boost::regex_match( \
+					target, what, boost::regex{ exp })) { \
+					for (auto i = 1; i < static_cast<int>(what.size()); i++) \
+						http_ctx.command_.emplace_back(what[i]); \
+					co_await func(http_ctx); \
+				}
+				#define END_HTTP_ROUTE() else { \
+					co_await default_http_route( \
+						http_ctx, \
+						"Illegal request", \
+						http::status::bad_request ); }
+
+				BEGIN_HTTP_ROUTE()
+					ON_HTTP_ROUTE("^/getfile/(.*)$", on_http_get)
+					ON_HTTP_ROUTE("^.*?$", on_http_root)
+				END_HTTP_ROUTE()
+
+				if (!keep_alive) break;
+				continue;
+			}
+
+			co_return;
+		}
+
+		inline std::filesystem::path path_cat(
+			const std::wstring& doc, const std::wstring& target)
+		{
+			size_t start_pos = 0;
+			for (auto& c : target)
+			{
+				if (!(c == L'/' || c == '\\'))
+					break;
+
+				start_pos++;
+			}
+
+			std::wstring_view sv;
+			std::wstring slash = L"/";
+
+			if (start_pos < target.size())
+				sv = std::wstring_view(target.c_str() + start_pos);
+#ifdef WIN32
+			if (doc.back() == L'/' ||
+				doc.back() == L'\\')
+				slash = L"";
+			return std::filesystem::path(doc + slash + std::wstring(sv));
+#else
+			if (doc.back() == L'/')
+				slash = L"";
+			return std::filesystem::path(
+				boost::nowide::narrow(doc + slash + std::wstring(sv)));
+#endif // WIN32
+		};
+
+		inline net::awaitable<void> on_http_root(
+			const http_context& hctx)
+		{
+			using namespace std::literals;
+			namespace fs = std::filesystem;
+			namespace chrono = std::chrono;
+
+			constexpr static auto head_fmt =
+				LR"(<html><head><meta charset="UTF-8"><title>Index of {}</title></head><body bgcolor="white"><h1>Index of {}</h1><hr><pre>)";
+			constexpr static auto tail_fmt =
+				L"</pre><hr></body></html>";
+			constexpr static auto body_fmt =
+				L"<a href=\"{}\">{}</a>{}{}              {}\r\n";
+
+			auto& request = hctx.request_;
+
+			std::string target;
+			unescape(request.target(), target);
+
+			if (!strutil::ends_with(target, "/"))
+			{
+				co_await on_http_get(hctx, target);
+				co_return;
+			}
+
+			auto doc_path = boost::nowide::widen(m_option.doc_directory_);
+			auto current_path = path_cat(
+				doc_path, boost::nowide::widen(target));
+
+			boost::system::error_code ec;
+			fs::directory_iterator end;
+			fs::directory_iterator it(current_path, ec);
+			if (ec)
+			{
+				string_response res{ http::status::found, request.version() };
+				res.set(http::field::server, version_string);
+				res.set(http::field::location, "/");
+				res.keep_alive(request.keep_alive());
+				res.prepare_payload();
+
+				http::serializer<false, string_body, http::fields> sr(res);
+				co_await http::async_write(
+					m_local_socket,
+					sr,
+					net_awaitable[ec]);
+				if (ec)
+					LOG_WARN << "start_web_connect, id: "
+					<< m_connection_id
+					<< ", err: "
+					<< ec.message();
+
+				co_return;
+			}
+
+			std::vector<std::wstring> path_list;
+
+			for (; it != end && !m_abort; it++)
+			{
+				const auto& item = it->path();
+				fs::path unc_path;
+				std::wstring time_string;
+
+				auto ftime = fs::last_write_time(item, ec);
+				if (ec)
+				{
+#ifdef WIN32
+					if (item.string().size() > MAX_PATH)
+					{
+						auto str = item.string();
+						boost::replace_all(str, "/", "\\");
+						unc_path = "\\\\?\\" + str;
+						ftime = fs::last_write_time(unc_path, ec);
+					}
+#endif
+				}
+
+				if (!ec)
+				{
+					const auto stime = chrono::time_point_cast<
+						chrono::system_clock::duration>(ftime
+						- fs::file_time_type::clock::now()
+						+ chrono::system_clock::now());
+					const auto write_time =
+						chrono::system_clock::to_time_t(stime);
+
+					char tmbuf[64] = { 0 };
+					auto tm = std::localtime(&write_time);
+					std::strftime(tmbuf,
+						sizeof(tmbuf),
+						"%m-%d-%Y %H:%M",
+						tm);
+
+					time_string = boost::nowide::widen(tmbuf);
+				}
+
+				std::wstring rpath;
+
+				if (fs::is_directory(item, ec))
+				{
+					auto leaf = item.filename().u16string();
+					leaf = leaf + u"/";
+					rpath.assign(leaf.begin(), leaf.end());
+					int width = 50 - ((int)leaf.size() + 1);
+					width = width < 0 ? 10 : width;
+					std::wstring space(width, L' ');
+					auto str = fmt::format(body_fmt,
+						rpath,
+						rpath,
+						space,
+						time_string,
+						L"[DIRECTORY]");
+
+					path_list.push_back(str);
+				}
+				else
+				{
+					auto leaf = item.filename().u16string();
+					rpath.assign(leaf.begin(), leaf.end());
+					int width = 50 - (int)leaf.size();
+					width = width < 0 ? 10 : width;
+					std::wstring space(width, L' ');
+					std::wstring filesize;
+					if (unc_path.empty())
+						unc_path = item;
+					auto sz = static_cast<float>(fs::file_size(
+						unc_path, ec));
+					if (ec)
+						sz = 0;
+					filesize = boost::nowide::widen(
+						add_suffix(sz));
+					auto str = fmt::format(body_fmt,
+						rpath,
+						rpath,
+						space,
+						time_string,
+						filesize);
+
+					path_list.push_back(str);
+				}
+			}
+
+			auto target_path = boost::nowide::widen(target);
+			std::wstring head = fmt::format(head_fmt,
+				target_path,
+				target_path);
+
+			std::wstring body = fmt::format(body_fmt,
+				L"../",
+				L"../",
+				L"",
+				L"",
+				L"");
+
+			std::sort(path_list.begin(), path_list.end());
+			for (auto& s : path_list)
+				body += s;
+			body = head + body + tail_fmt;
+
+			string_response res{ http::status::ok, request.version() };
+			res.set(http::field::server, version_string);
+			res.keep_alive(request.keep_alive());
+			res.body() = boost::nowide::narrow(body);
+			res.prepare_payload();
+
+			http::serializer<false, string_body, http::fields> sr(res);
+			co_await http::async_write(
+				m_local_socket,
+				sr,
+				net_awaitable[ec]);
+			if (ec)
+				LOG_WARN << "start_web_connect, id: "
+				<< m_connection_id
+				<< ", err: "
+				<< ec.message();
+
+			co_return;
+		}
+
+		inline net::awaitable<void> on_http_get(
+			const http_context& hctx, std::string filename = "")
+		{
+			namespace fs = std::filesystem;
+
+			static std::map<std::string, std::string> mimes =
+			{
+				{ ".html", "text/html; charset=utf-8" },
+				{ ".htm", "text/html; charset=utf-8" },
+				{ ".js", "application/javascript" },
+				{ ".h", "text/javascript" },
+				{ ".hpp", "text/javascript" },
+				{ ".cpp", "text/javascript" },
+				{ ".cxx", "text/javascript" },
+				{ ".cc", "text/javascript" },
+				{ ".c", "text/javascript" },
+				{ ".json", "application/json" },
+				{ ".css", "text/css" },
+				{ ".woff", "application/x-font-woff" },
+				{ ".pdf", "application/pdf" },
+				{ ".png", "image/png" },
+				{ ".jpg", "image/jpg" },
+				{ ".jpeg", "image/jpg" },
+				{ ".gif", "image/gif" },
+				{ ".webp", "image/webp" },
+				{ ".svg", "image/svg+xml" },
+				{ ".wav", "audio/x-wav" },
+				{ ".ogg", "video/ogg" },
+				{ ".mp4", "video/mp4" },
+				{ ".flv", "video/x-flv" },
+				{ ".f4v", "video/x-f4v" },
+				{ ".ts", "video/MP2T" },
+				{ ".mov", "video/quicktime" },
+				{ ".avi", "video/x-msvideo" },
+				{ ".wmv", "video/x-ms-wmv" },
+				{ ".3gp", "video/3gpp" },
+				{ ".mkv", "video/x-matroska" },
+				{ ".7z", "application/x-7z-compressed" },
+				{ ".ppt", "application/vnd.ms-powerpoint" },
+				{ ".zip", "application/zip" },
+				{ ".xz", "application/x-xz" },
+				{ ".xml", "application/xml" },
+				{ ".webm", "video/webm" }
+			};
+
+			using ranges = std::vector<std::pair<int64_t, int64_t>>;
+			static auto get_ranges = [](std::string range) -> ranges
+			{
+				range = strutil::remove_spaces(range);
+				boost::ireplace_first(range, "bytes=", "");
+
+				boost::sregex_iterator it(
+					range.begin(), range.end(),
+					boost::regex{ "((\\d+)-(\\d+))+" });
+
+				ranges result;
+				std::for_each(it, {}, [&result](const auto& what) mutable
+					{
+						result.emplace_back(
+							std::make_pair(
+								std::atoll(what[2].str().c_str()),
+								std::atoll(what[3].str().c_str())));
+					});
+
+				if (result.empty() && !range.empty())
+				{
+					if (range.front() == '-')
+					{
+						auto r = std::atoll(range.c_str());
+						result.emplace_back(std::make_pair(r, -1));
+					}
+					else if (range.back() == '-')
+					{
+						auto r = std::atoll(range.c_str());
+						result.emplace_back(std::make_pair(r, -1));
+					}
+				}
+
+				return result;
+			};
+
+			boost::system::error_code ec;
+
+			auto& request = hctx.request_;
+			if (request.method() == http::verb::get &&
+				hctx.command_.size() > 0 &&
+				filename.empty())
+				filename = hctx.command_[0];
+
+			if (filename.empty())
+			{
+				LOG_WARN << "on_http_get, id: "
+					<< m_connection_id
+					<< ", bad request filename";
+
+				co_await default_http_route(hctx,
+					"bad request filename",
+					http::status::bad_request);
+
+				co_return;
+			}
+
+			auto doc_path = boost::nowide::widen(m_option.doc_directory_);
+
+#ifdef WIN32
+			boost::replace_all(filename, "/", "\\");
+			auto len = doc_path.size() + filename.size();
+			if (len > MAX_PATH)
+				doc_path = L"\\\\?\\" + doc_path;
+#endif
+			auto path = path_cat(
+				doc_path, boost::nowide::widen(filename));
+
+			if (!fs::exists(path))
+			{
+				LOG_WARN << "on_http_get, id: "
+					<< m_connection_id
+					<< ", "
+					<< filename
+					<< " file not exists";
+
+				co_await default_http_route(hctx,
+					"file not exists",
+					http::status::bad_request);
+
+				co_return;
+			}
+
+			std::fstream file(path.string(),
+				std::ios_base::binary |
+				std::ios_base::in);
+
+			size_t content_length = fs::file_size(path);
+
+			LOG_DBG << "on_http_get, id: "
+				<< m_connection_id
+				<< ", file: "
+				<< filename
+				<< ", size: "
+				<< content_length;
+
+			auto range = get_ranges(request["Range"]);
+			http::status st = http::status::ok;
+			if (!range.empty())
+			{
+				st = http::status::partial_content;
+				auto& r = range.front();
+
+				if (r.second == -1)
+				{
+					if (r.first < 0)
+					{
+						r.first = content_length + r.first;
+						r.second = content_length - 1;
+					}
+					else if (r.first >= 0)
+					{
+						r.second = content_length - 1;
+					}
+				}
+
+				file.seekg(r.first, std::ios_base::beg);
+			}
+
+			buffer_response res{ st, request.version() };
+
+			res.set(http::field::server, version_string);
+			auto ext = to_lower(fs::path(path).extension().string());
+
+			if (mimes.count(ext))
+				res.set(http::field::content_type, mimes[ext]);
+			else
+				res.set(http::field::content_type, "text/plain");
+
+			if (st == http::status::ok)
+				res.set(http::field::accept_ranges, "bytes");
+
+			if (st == http::status::partial_content)
+			{
+				const auto& r = range.front();
+
+				if (r.second < r.first && r.second >= 0)
+				{
+					co_await default_http_route(hctx,
+						R"(<html>
+<head><title>416 Requested Range Not Satisfiable</title></head>
+<body>
+<center><h1>416 Requested Range Not Satisfiable</h1></center>
+<hr><center>nginx/1.20.2</center>
+</body>
+</html>
+)",
+						http::status::range_not_satisfiable);
+					co_return;
+				}
+
+				std::string content_range = fmt::format(
+					"bytes {}-{}/{}",
+					r.first,
+					r.second,
+					content_length);
+				content_length = r.second - r.first + 1;
+				res.set(http::field::content_range, content_range);
+			}
+
+			res.keep_alive(hctx.request_.keep_alive());
+			res.content_length(content_length);
+
+			response_serializer sr(res);
+
+			res.body().data = nullptr;
+			res.body().more = false;
+
+			co_await http::async_write_header(
+				m_local_socket,
+				sr,
+				net_awaitable[ec]);
+			if (ec)
+			{
+				LOG_WARN << "on_http_get, id: "
+					<< m_connection_id
+					<< ", async_write_header: "
+					<< ec.message();
+
+				co_return;
+			}
+
+			const auto buf_size = 5 * 1024 * 1024;
+			char buf[buf_size];
+			std::streamsize total = 0;
+
+			do
+			{
+				auto bytes_transferred = fileop::read(file, buf);
+				bytes_transferred = std::min<std::streamsize>(
+					bytes_transferred,
+					content_length - total
+				);
+				if (bytes_transferred == 0 ||
+					total >= (std::streamsize)content_length)
+				{
+					res.body().data = nullptr;
+					res.body().more = false;
+				}
+				else
+				{
+					res.body().data = buf;
+					res.body().size = bytes_transferred;
+					res.body().more = true;
+				}
+
+				co_await http::async_write(
+					m_local_socket,
+					sr,
+					net_awaitable[ec]);
+				total += bytes_transferred;
+				if (ec == http::error::need_buffer)
+				{
+					ec = {};
+					continue;
+				}
+				if (ec)
+				{
+					LOG_WARN << "on_http_get, id: "
+						<< m_connection_id
+						<< ", async_write: "
+						<< ec.message();
+					co_return;
+				}
+			} while (!sr.is_done());
+
+			LOG_DBG << "on_http_get, id: "
+				<< m_connection_id
+				<< ", request: "
+				<< filename
+				<< ", completed";
+
+			co_return;
+		}
+
+		inline net::awaitable<void> default_http_route(
+			const http_context& hctx, std::string response, http::status status)
+		{
+			auto& request = hctx.request_;
+
+			boost::system::error_code ec;
+			string_response res{ status, request.version() };
+			res.set(http::field::server, version_string);
+			res.set(http::field::content_type, "text/html");
+
+			res.keep_alive(false);
+			res.body() = response;
+			res.prepare_payload();
+
+			http::serializer<false, string_body, http::fields> sr(res);
+			co_await http::async_write(m_local_socket, sr, net_awaitable[ec]);
+			if (ec)
+			{
+				LOG_WARN << "default_http_route, id: "
+					<< m_connection_id
+					<< ", err: "
+					<< ec.message();
+			}
+
+			co_return;
+		}
+
+		inline const std::string& fake_web_page() const
 		{
 			static std::string fake_content =
 R"xxxxxx(HTTP/1.1 404 Not Found
@@ -1386,7 +2339,7 @@ Connection: close
 			return fake_content;
 		}
 
-		const std::string& bad_request_page() const
+		inline const std::string& bad_request_page() const
 		{
 			static std::string fake_content =
 R"xxxxxx(HTTP/1.1 400 Bad Request
@@ -1403,6 +2356,10 @@ Connection: close
 	private:
 		proxy_stream_type m_local_socket;
 		proxy_stream_type m_remote_socket;
+		udp::socket m_udp_socket;
+		udp::endpoint m_client_endp;
+		net::steady_timer m_timer;
+		int m_timeout{ udp_session_expired_time };
 		size_t m_connection_id;
 		net::streambuf m_local_buffer{};
 		std::weak_ptr<proxy_server_base> m_proxy_server;
@@ -1421,9 +2378,8 @@ Connection: close
 		proxy_server(const proxy_server&) = delete;
 		proxy_server& operator=(const proxy_server&) = delete;
 
-	public:
 		proxy_server(net::any_io_executor executor,
-			const tcp::endpoint& endp, proxy_server_option opt = {})
+			const tcp::endpoint& endp, proxy_server_option opt)
 			: m_executor(executor)
 			, m_acceptor(executor, endp)
 			, m_option(std::move(opt))
@@ -1434,21 +2390,44 @@ Connection: close
 			m_acceptor.listen(net::socket_base::max_listen_connections, ec);
 		}
 
+	public:
+		inline static std::shared_ptr<proxy_server> make(
+			net::any_io_executor executor,
+			const tcp::endpoint& endp,
+			proxy_server_option opt)
+		{
+			return std::shared_ptr<proxy_server>(new
+				proxy_server(executor, std::cref(endp), opt));
+		}
+
 		virtual ~proxy_server() = default;
 
-		void init_ssl_context()
+		inline void init_ssl_context()
 		{
 			m_ssl_context.set_options(
 				net::ssl::context::default_workarounds
 				| net::ssl::context::no_sslv2
+				| net::ssl::context::no_sslv3
+				| net::ssl::context::no_tlsv1
+				| net::ssl::context::no_tlsv1_1
 				| net::ssl::context::single_dh_use);
+
+			if (m_option.ssl_prefer_server_ciphers_)
+				m_ssl_context.set_options(SSL_OP_CIPHER_SERVER_PREFERENCE);
+
+			const std::string ssl_ciphers = "HIGH:!aNULL:!MD5:!3DES";
+			if (m_option.ssl_ciphers_.empty())
+				m_option.ssl_ciphers_ = ssl_ciphers;
+
+			SSL_CTX_set_cipher_list(m_ssl_context.native_handle(),
+				m_option.ssl_ciphers_.c_str());
 
 			auto dir = std::filesystem::path(m_option.ssl_cert_path_);
 			auto pwd = dir / "ssl_crt.pwd";
 
 			if (std::filesystem::exists(pwd))
 				m_ssl_context.set_password_callback(
-					[this, &pwd]([[maybe_unused]] auto... args) {
+					[&pwd]([[maybe_unused]] auto... args) {
 						std::string password;
 						fileop::read(pwd, password);
 						return password;

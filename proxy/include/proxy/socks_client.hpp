@@ -10,11 +10,11 @@
 
 #pragma once
 
+#include "utils/asio_util.hpp"
+
 #include "proxy/socks_error_code.hpp"
 #include "proxy/socks_enums.hpp"
 #include "proxy/socks_io.hpp"
-
-#include "proxy/use_awaitable.hpp"
 
 #include <cstdlib>
 #include <string>
