@@ -7,12 +7,12 @@ int main()
 {
 	net::io_context ioc;
 
-	animals::http_request req{ animals::http::verb::get, "/", 11 };
+	animals::http_request req{ animals::http::verb::get, "", 11 };
 	req.set(animals::http::field::host, "www.boost.org");
 	req.set(animals::http::field::user_agent, ANIMALS_VERSION_STRING);
 
 	animals::goat g(ioc.get_executor());
-	g.async_perform("https://www.boost.org", req,
+	g.async_perform("https://www.boost.org/LICENSE_1_0.txt", req,
 		[](boost::system::error_code ec, animals::http_response resp) mutable
 		{
 			if (ec)

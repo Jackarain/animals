@@ -12,13 +12,13 @@ int main()
 		{
 			animals::goat g(ioc.get_executor());
 
-			animals::http_request req{ animals::http::verb::get, "/", 11 };
+			animals::http_request req{ animals::http::verb::get, "", 11 };
 			req.set(animals::http::field::host, "www.boost.org");
 			req.set(animals::http::field::user_agent, ANIMALS_VERSION_STRING);
 
 			boost::system::error_code ec;
 			auto resp = co_await g.async_perform(
-				"https://www.boost.org", req, net_awaitable[ec]);
+				"https://www.boost.org/LICENSE_1_0.txt", req, net_awaitable[ec]);
 			if (ec)
 			{
 				LOG_ERR << "http got: " << ec.message();
