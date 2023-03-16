@@ -446,7 +446,7 @@ namespace animals
 			}
 
 			auto hostname = host + ":" + port;
-			auto target = uv.path();
+			auto target = uv.path().empty() ? "/" : uv.path();
 
 			if (auto wsp = boost::variant2::get_if<ws_stream_ptr>(&m_stream))
 			{
