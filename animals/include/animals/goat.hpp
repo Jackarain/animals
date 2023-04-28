@@ -148,6 +148,7 @@ namespace animals
 		inline void reset()
 		{
 			m_stream = variant_stream{};
+			m_connection_keepalive = false;
 			m_dump_file.clear();
 			m_download_percent = {};
 			m_content_lentgh = {};
@@ -276,6 +277,13 @@ namespace animals
 			if (user_agent_it == req.end())
 				req.set(http::field::user_agent, ANIMALS_VERSION_STRING);
 
+			auto conn_type = req.find(http::field::connection);
+			if (conn_type != req.end())
+			{
+				if (beast::iequals(conn_type->value(), "close"))
+					m_connection_keepalive = false;
+			}
+
 			if (req.target() == "")
 			{
 				std::string query;
@@ -299,7 +307,7 @@ namespace animals
 					req.content_length(req.body().size());
 			}
 
-			if (beast::iequals(uv.scheme(), "https"))
+			if (beast::iequals(uv.scheme(), "https") && !m_connection_keepalive)
 			{
 				m_ssl_ctx = std::make_unique<
 					net::ssl::context>(net::ssl::context::sslv23_client);
@@ -431,7 +439,7 @@ namespace animals
 				beast::get_lowest_layer(stream).expires_after(
 					std::chrono::seconds(30));
 			}
-			else if (beast::iequals(uv.scheme(), "http"))
+			else if (beast::iequals(uv.scheme(), "http") && !m_connection_keepalive)
 			{
 				std::string port(uv.port());
 				if (port.empty())
@@ -481,7 +489,7 @@ namespace animals
 				beast::get_lowest_layer(stream).expires_after(
 					std::chrono::seconds(30));
 			}
-			else
+			else if (!m_connection_keepalive)
 			{
 				BOOST_ASSERT(false && "not supported scheme!");
 				ec = net::error::make_error_code(
@@ -659,24 +667,35 @@ namespace animals
 			if (ec)
 				co_return ec;
 
-			// Gracefully close the socket
-			if constexpr (std::is_same_v<std::decay_t<S>, ssl_stream>)
+			m_connection_keepalive = true;
+			auto conn_type = result.find(http::field::connection);
+			if (conn_type != result.end())
 			{
-				beast::get_lowest_layer(stream).expires_after(
-					std::chrono::seconds(30));
+				if (beast::iequals(conn_type->value(), "close"))
+					m_connection_keepalive = false;
+			}
 
-				boost::system::error_code ignore_ec;
-				co_await stream.async_shutdown(
-					net_awaitable[ignore_ec]);
-			}
-			else if constexpr (std::is_same_v<std::decay_t<S>, tcp_stream>)
+			if (!m_connection_keepalive)
 			{
-				stream.socket().shutdown(
-					tcp::socket::shutdown_both);
-			}
-			else
-			{
-				static_assert(always_false<S>, "non-exhaustive visitor!");
+				// Gracefully close the socket
+				if constexpr (std::is_same_v<std::decay_t<S>, ssl_stream>)
+				{
+					beast::get_lowest_layer(stream).expires_after(
+						std::chrono::seconds(30));
+
+					boost::system::error_code ignore_ec;
+					co_await stream.async_shutdown(
+						net_awaitable[ignore_ec]);
+				}
+				else if constexpr (std::is_same_v<std::decay_t<S>, tcp_stream>)
+				{
+					stream.socket().shutdown(
+						tcp::socket::shutdown_both);
+				}
+				else
+				{
+					static_assert(always_false<S>, "non-exhaustive visitor!");
+				}
 			}
 
 			co_return ec;
@@ -777,6 +796,7 @@ namespace animals
 		executor_type m_executor;
 		variant_stream m_stream;
 		std::unique_ptr<net::ssl::context> m_ssl_ctx;
+		bool m_connection_keepalive{ false };
 		bool m_check_certificate;
 		std::string m_cert_path;
 		std::string m_cert_file;
