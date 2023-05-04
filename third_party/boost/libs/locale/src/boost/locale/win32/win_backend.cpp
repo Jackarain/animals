@@ -4,14 +4,13 @@
 // Distributed under the Boost Software License, Version 1.0.
 // https://www.boost.org/LICENSE_1_0.txt
 
-#define BOOST_LOCALE_SOURCE
 #include "boost/locale/win32/win_backend.hpp"
 #include <boost/locale/gnu_gettext.hpp>
 #include <boost/locale/info.hpp>
 #include <boost/locale/localization_backend.hpp>
 #include <boost/locale/util.hpp>
+#include <boost/locale/util/locale_data.hpp>
 #include "boost/locale/util/gregorian.hpp"
-#include "boost/locale/util/locale_data.hpp"
 #include "boost/locale/win32/all_generator.hpp"
 #include "boost/locale/win32/api.hpp"
 #include <algorithm>
@@ -29,7 +28,7 @@ namespace boost { namespace locale { namespace impl_win {
         {}
         winapi_localization_backend* clone() const override { return new winapi_localization_backend(*this); }
 
-        void set_option(const std::string& name, const std::string& value)
+        void set_option(const std::string& name, const std::string& value) override
         {
             invalid_ = true;
             if(name == "locale")
@@ -39,7 +38,7 @@ namespace boost { namespace locale { namespace impl_win {
             else if(name == "message_application")
                 domains_.push_back(value);
         }
-        void clear_options()
+        void clear_options() override
         {
             invalid_ = true;
             locale_id_.clear();
@@ -61,7 +60,7 @@ namespace boost { namespace locale { namespace impl_win {
             }
             util::locale_data d;
             d.parse(real_id_);
-            if(!d.utf8) {
+            if(!d.is_utf8()) {
                 lc_ = winlocale();
                 // Make it C as non-UTF8 locales are not supported
             }
@@ -79,7 +78,7 @@ namespace boost { namespace locale { namespace impl_win {
                 case category_t::calendar: {
                     util::locale_data inf;
                     inf.parse(real_id_);
-                    return util::install_gregorian_calendar(base, inf.country);
+                    return util::install_gregorian_calendar(base, inf.country());
                 }
                 case category_t::message: {
                     gnu_gettext::messages_info minf;

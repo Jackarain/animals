@@ -4,7 +4,6 @@
 // Distributed under the Boost Software License, Version 1.0.
 // https://www.boost.org/LICENSE_1_0.txt
 
-#define BOOST_LOCALE_SOURCE
 #include <boost/locale/date_time.hpp>
 #include <boost/locale/formatting.hpp>
 #include "boost/locale/shared/ios_prop.hpp"
@@ -49,61 +48,58 @@ namespace boost { namespace locale {
 
     ios_info::~ios_info() = default;
 
-    ios_info::ios_info(const ios_info& other) = default;
-    ios_info& ios_info::operator=(const ios_info& other) = default;
+    ios_info::ios_info(const ios_info&) = default;
+    ios_info& ios_info::operator=(const ios_info&) = default;
 
     void ios_info::display_flags(uint64_t f)
     {
         flags_ = (flags_ & ~uint64_t(flags::display_flags_mask)) | f;
     }
+    uint64_t ios_info::display_flags() const
+    {
+        return flags_ & flags::display_flags_mask;
+    }
+
     void ios_info::currency_flags(uint64_t f)
     {
         flags_ = (flags_ & ~uint64_t(flags::currency_flags_mask)) | f;
     }
+    uint64_t ios_info::currency_flags() const
+    {
+        return flags_ & flags::currency_flags_mask;
+    }
+
     void ios_info::date_flags(uint64_t f)
     {
         flags_ = (flags_ & ~uint64_t(flags::date_flags_mask)) | f;
     }
+    uint64_t ios_info::date_flags() const
+    {
+        return flags_ & flags::date_flags_mask;
+    }
+
     void ios_info::time_flags(uint64_t f)
     {
         flags_ = (flags_ & ~uint64_t(flags::time_flags_mask)) | f;
+    }
+    uint64_t ios_info::time_flags() const
+    {
+        return flags_ & flags::time_flags_mask;
     }
 
     void ios_info::domain_id(int id)
     {
         domain_id_ = id;
     }
-
-    void ios_info::time_zone(const std::string& tz)
-    {
-        time_zone_ = tz;
-    }
-
-    uint64_t ios_info::display_flags() const
-    {
-        return flags_ & flags::display_flags_mask;
-    }
-
-    uint64_t ios_info::currency_flags() const
-    {
-        return flags_ & flags::currency_flags_mask;
-    }
-
-    uint64_t ios_info::date_flags() const
-    {
-        return flags_ & flags::date_flags_mask;
-    }
-
-    uint64_t ios_info::time_flags() const
-    {
-        return flags_ & flags::time_flags_mask;
-    }
-
     int ios_info::domain_id() const
     {
         return domain_id_;
     }
 
+    void ios_info::time_zone(const std::string& tz)
+    {
+        time_zone_ = tz;
+    }
     std::string ios_info::time_zone() const
     {
         return time_zone_;

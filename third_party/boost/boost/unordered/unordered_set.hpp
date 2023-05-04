@@ -15,6 +15,7 @@
 #pragma once
 #endif
 
+#include <boost/unordered/detail/requires_cxx11.hpp>
 #include <boost/core/explicit_operator_bool.hpp>
 #include <boost/functional/hash.hpp>
 #include <boost/move/move.hpp>
@@ -390,6 +391,15 @@ namespace boost {
         return this->emplace(boost::move(x));
       }
 
+      template <class Key>
+      typename boost::enable_if_c<
+        detail::transparent_non_iterable<Key, unordered_set>::value,
+        std::pair<iterator, bool> >::type
+      insert(BOOST_FWD_REF(Key) k)
+      {
+        return table_.try_emplace_unique(boost::forward<Key>(k));
+      }
+
       iterator insert(const_iterator hint, value_type const& x)
       {
         return this->emplace_hint(hint, x);
@@ -398,6 +408,15 @@ namespace boost {
       iterator insert(const_iterator hint, BOOST_UNORDERED_RV_REF(value_type) x)
       {
         return this->emplace_hint(hint, boost::move(x));
+      }
+
+      template <class Key>
+      typename boost::enable_if_c<
+        detail::transparent_non_iterable<Key, unordered_set>::value,
+        iterator>::type
+      insert(const_iterator hint, BOOST_FWD_REF(Key) k)
+      {
+        return table_.try_emplace_hint_unique(hint, boost::forward<Key>(k));
       }
 
       template <class InputIt> void insert(InputIt, InputIt);
@@ -571,6 +590,14 @@ namespace boost {
         return table_.hash_to_bucket(table_.hash(k));
       }
 
+      template <class Key>
+      typename boost::enable_if_c<detail::are_transparent<Key, H, P>::value,
+        size_type>::type
+      bucket(BOOST_FWD_REF(Key) k) const
+      {
+        return table_.hash_to_bucket(table_.hash(boost::forward<Key>(k)));
+      }
+
       local_iterator begin(size_type n)
       {
         return local_iterator(table_.begin(n));
@@ -672,6 +699,20 @@ namespace boost {
       class = boost::enable_if_t<detail::is_allocator_v<Allocator> > >
     unordered_set(std::initializer_list<T>, std::size_t, Hash, Allocator)
       -> unordered_set<T, Hash, std::equal_to<T>, Allocator>;
+
+    template <class InputIterator, class Allocator,
+      class = boost::enable_if_t<detail::is_input_iterator_v<InputIterator> >,
+      class = boost::enable_if_t<detail::is_allocator_v<Allocator> > >
+    unordered_set(InputIterator, InputIterator, Allocator)
+      -> unordered_set<typename std::iterator_traits<InputIterator>::value_type,
+        boost::hash<typename std::iterator_traits<InputIterator>::value_type>,
+        std::equal_to<typename std::iterator_traits<InputIterator>::value_type>,
+        Allocator>;
+
+    template <class T, class Allocator,
+      class = boost::enable_if_t<detail::is_allocator_v<Allocator> > >
+    unordered_set(std::initializer_list<T>, Allocator)
+      -> unordered_set<T, boost::hash<T>, std::equal_to<T>, Allocator>;
 
 #endif
 
@@ -1198,6 +1239,14 @@ namespace boost {
         return table_.hash_to_bucket(table_.hash(k));
       }
 
+      template <class Key>
+      typename boost::enable_if_c<detail::are_transparent<Key, H, P>::value,
+        size_type>::type
+      bucket(BOOST_FWD_REF(Key) k) const
+      {
+        return table_.hash_to_bucket(table_.hash(boost::forward<Key>(k)));
+      }
+
       local_iterator begin(size_type n)
       {
         return local_iterator(table_.begin(n));
@@ -1302,6 +1351,21 @@ namespace boost {
       class = boost::enable_if_t<detail::is_allocator_v<Allocator> > >
     unordered_multiset(std::initializer_list<T>, std::size_t, Hash, Allocator)
       -> unordered_multiset<T, Hash, std::equal_to<T>, Allocator>;
+
+    template <class InputIterator, class Allocator,
+      class = boost::enable_if_t<detail::is_input_iterator_v<InputIterator> >,
+      class = boost::enable_if_t<detail::is_allocator_v<Allocator> > >
+    unordered_multiset(InputIterator, InputIterator, Allocator)
+      -> unordered_multiset<
+        typename std::iterator_traits<InputIterator>::value_type,
+        boost::hash<typename std::iterator_traits<InputIterator>::value_type>,
+        std::equal_to<typename std::iterator_traits<InputIterator>::value_type>,
+        Allocator>;
+
+    template <class T, class Allocator,
+      class = boost::enable_if_t<detail::is_allocator_v<Allocator> > >
+    unordered_multiset(std::initializer_list<T>, Allocator)
+      -> unordered_multiset<T, boost::hash<T>, std::equal_to<T>, Allocator>;
 
 #endif
 

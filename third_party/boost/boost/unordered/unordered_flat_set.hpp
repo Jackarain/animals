@@ -30,17 +30,38 @@ namespace boost {
 #pragma warning(disable : 4714) /* marked as __forceinline not inlined */
 #endif
 
-    template <class Key, class Hash, class KeyEqual, class Allocator>
-    class unordered_flat_set
-    {
-      struct set_types
+    namespace detail {
+      template <class Key> struct flat_set_types
       {
         using key_type = Key;
         using init_type = Key;
         using value_type = Key;
+
         static Key const& extract(value_type const& key) { return key; }
-        static Key&& move(value_type& x) { return std::move(x); }
+
+        using element_type = value_type;
+
+        static Key& value_from(element_type& x) { return x; }
+
+        static element_type&& move(element_type& x) { return std::move(x); }
+
+        template <class A, class... Args>
+        static void construct(A& al, value_type* p, Args&&... args)
+        {
+          boost::allocator_construct(al, p, std::forward<Args>(args)...);
+        }
+
+        template <class A> static void destroy(A& al, value_type* p) noexcept
+        {
+          boost::allocator_destroy(al, p);
+        }
       };
+    } // namespace detail
+
+    template <class Key, class Hash, class KeyEqual, class Allocator>
+    class unordered_flat_set
+    {
+      using set_types = detail::flat_set_types<Key>;
 
       using table_type = detail::foa::table<set_types, Hash, KeyEqual,
         typename boost::allocator_rebind<Allocator,
@@ -231,6 +252,15 @@ namespace boost {
         return table_.insert(std::move(value));
       }
 
+      template <class K>
+      BOOST_FORCEINLINE typename std::enable_if<
+        detail::transparent_non_iterable<K, unordered_flat_set>::value,
+        std::pair<iterator, bool> >::type
+      insert(K&& k)
+      {
+        return table_.try_emplace(std::forward<K>(k));
+      }
+
       BOOST_FORCEINLINE iterator insert(const_iterator, value_type const& value)
       {
         return table_.insert(value).first;
@@ -239,6 +269,15 @@ namespace boost {
       BOOST_FORCEINLINE iterator insert(const_iterator, value_type&& value)
       {
         return table_.insert(std::move(value)).first;
+      }
+
+      template <class K>
+      BOOST_FORCEINLINE typename std::enable_if<
+        detail::transparent_non_iterable<K, unordered_flat_set>::value,
+        iterator>::type
+      insert(const_iterator, K&& k)
+      {
+        return table_.try_emplace(std::forward<K>(k)).first;
       }
 
       template <class InputIterator>
@@ -313,14 +352,14 @@ namespace boost {
       /// Lookup
       ///
 
-      size_type count(key_type const& key) const
+      BOOST_FORCEINLINE size_type count(key_type const& key) const
       {
         auto pos = table_.find(key);
         return pos != table_.end() ? 1 : 0;
       }
 
       template <class K>
-      typename std::enable_if<
+      BOOST_FORCEINLINE typename std::enable_if<
         detail::are_transparent<K, hasher, key_equal>::value, size_type>::type
       count(K const& key) const
       {
@@ -356,13 +395,13 @@ namespace boost {
         return table_.find(key);
       }
 
-      bool contains(key_type const& key) const
+      BOOST_FORCEINLINE bool contains(key_type const& key) const
       {
         return this->find(key) != this->end();
       }
 
       template <class K>
-      typename std::enable_if<
+      BOOST_FORCEINLINE typename std::enable_if<
         boost::unordered::detail::are_transparent<K, hasher, key_equal>::value,
         bool>::type
       contains(K const& key) const
@@ -563,6 +602,21 @@ namespace boost {
       class = boost::enable_if_t<detail::is_allocator_v<Allocator> > >
     unordered_flat_set(std::initializer_list<T>, std::size_t, Hash, Allocator)
       -> unordered_flat_set<T, Hash, std::equal_to<T>, Allocator>;
+
+    template <class InputIterator, class Allocator,
+      class = boost::enable_if_t<detail::is_input_iterator_v<InputIterator> >,
+      class = boost::enable_if_t<detail::is_allocator_v<Allocator> > >
+    unordered_flat_set(InputIterator, InputIterator, Allocator)
+      -> unordered_flat_set<
+        typename std::iterator_traits<InputIterator>::value_type,
+        boost::hash<typename std::iterator_traits<InputIterator>::value_type>,
+        std::equal_to<typename std::iterator_traits<InputIterator>::value_type>,
+        Allocator>;
+
+    template <class T, class Allocator,
+      class = boost::enable_if_t<detail::is_allocator_v<Allocator> > >
+    unordered_flat_set(std::initializer_list<T>, Allocator)
+      -> unordered_flat_set<T, boost::hash<T>, std::equal_to<T>, Allocator>;
 #endif
 
   } // namespace unordered

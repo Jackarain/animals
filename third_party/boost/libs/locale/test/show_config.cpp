@@ -4,10 +4,6 @@
 // Distributed under the Boost Software License, Version 1.0.
 // https://www.boost.org/LICENSE_1_0.txt
 
-#ifdef _MSC_VER
-#    define _CRT_SECURE_NO_WARNINGS
-#endif
-
 #include <boost/locale.hpp>
 #include <clocale>
 #include <cstdlib>
@@ -17,42 +13,64 @@
 #include <locale>
 #include <stdexcept>
 #include <vector>
+#ifndef BOOST_LOCALE_NO_WINAPI_BACKEND
+#    include "../src/boost/locale/win32/lcid.hpp"
+#endif
+#include <boost/core/ignore_unused.hpp>
 
 #ifdef BOOST_LOCALE_WITH_ICU
 #    include <unicode/uversion.h>
 #endif
 
 #include "boostLocale/test/tools.hpp"
+#include "boostLocale/test/unit_test.hpp"
 
 const char* env(const char* s)
 {
+#ifdef _MSC_VER
+#    pragma warning(push)
+#    pragma warning(disable : 4996)
+#endif
+#if defined(__clang__)
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
     const char* r = getenv(s);
+#if defined(__clang__)
+#    pragma clang diagnostic pop
+#endif
+#ifdef _MSC_VER
+#    pragma warning(pop)
+#endif
     if(r)
         return r;
     return "";
 }
 
-void check_locale(const std::vector<const char*>& names)
+bool has_win_locale(const std::string& locale_name)
 {
-    std::cout << "  " << std::setw(32) << "locale" << std::setw(4) << "C" << std::setw(4) << "C++\n";
+#ifdef BOOST_LOCALE_NO_WINAPI_BACKEND
+    boost::ignore_unused(locale_name);
+    return false;
+#else
+    return boost::locale::impl_win::locale_to_lcid(locale_name) != 0;
+#endif
+}
+
+void check_locales(const std::vector<const char*>& names)
+{
+    std::cout << std::setw(32) << "locale" << std::setw(7) << "POSIX" << std::setw(5) << "STD" << std::setw(5) << "WIN"
+              << std::endl;
     for(const char* name : names) {
-        std::cout << "  " << std::setw(32) << name << std::setw(4);
-        if(setlocale(LC_ALL, name) != 0)
-            std::cout << "Yes";
-        else
-            std::cout << "No";
-        std::cout << std::setw(4);
-        try {
-            std::locale l(name);
-            std::cout << "Yes";
-        } catch(const std::exception&) {
-            std::cout << "No";
-        }
+        std::cout << std::setw(32) << name;
+        std::cout << std::setw(7) << (has_posix_locale(name) ? "Yes" : "No");
+        std::cout << std::setw(5) << (has_std_locale(name) ? "Yes" : "No");
+        std::cout << std::setw(5) << (has_win_locale(name) ? "Yes" : "No");
         std::cout << std::endl;
     }
 }
 
-int main()
+void test_main(int /*argc*/, char** /*argv*/)
 {
     std::cout << "- Backends: ";
 #ifdef BOOST_LOCALE_WITH_ICU
@@ -109,32 +127,29 @@ int main()
       "ja_JP.UTF-8",
       "ja_JP.SJIS",
       "Japanese_Japan.932",
+      "en_001.UTF-8",
+      "en_150.UTF-8",
     };
     std::cout << "- Testing locales availability on the operation system:" << std::endl;
-    check_locale(locales_to_check);
-    std::cout << "--- Testing Japanese_Japan.932 is working: " << test_std_supports_SJIS_codecvt("Japanese_Japan.932")
-              << std::endl;
+    check_locales(locales_to_check);
+    std::cout << "--- Testing Japanese_Japan.932 is working: ";
+    std::cout << (test_std_supports_SJIS_codecvt("Japanese_Japan.932") ? "Yes" : "No") << std::endl;
 
     std::cout << "- Testing timezone and time " << std::endl;
     {
         setlocale(LC_ALL, "C");
         time_t now = time(0);
         char buf[1024];
-        strftime(buf, sizeof(buf), "%%c=%c; %%Z=%Z; %%z=%z", localtime(&now));
+        strftime(buf, sizeof(buf), "%%c=%c; %%Z=%Z; %%z=%z", localtime_wrap(&now));
         std::cout << "  Local Time    :" << buf << std::endl;
-        strftime(buf, sizeof(buf), "%%c=%c; %%Z=%Z; %%z=%z", gmtime(&now));
+        strftime(buf, sizeof(buf), "%%c=%c; %%Z=%Z; %%z=%z", gmtime_wrap(&now));
         std::cout << "  Universal Time:" << buf << std::endl;
     }
     std::cout << "- Boost.Locale's locale: ";
-    try {
-        boost::locale::generator gen;
-        std::locale l = gen("");
-        std::cout << std::use_facet<boost::locale::info>(l).name() << std::endl;
-    } catch(const std::exception&) {
-        std::cout << " undetected\n"; // LCOV_EXCL_LINE
-        return EXIT_FAILURE;          // LCOV_EXCL_LINE
-    }
-    return EXIT_SUCCESS;
+    boost::locale::generator gen;
+    std::locale l = gen("");
+    std::cout << (std::has_facet<boost::locale::info>(l) ? std::use_facet<boost::locale::info>(l).name() : "Unknown")
+              << std::endl;
 }
 
 // boostinspect:noascii

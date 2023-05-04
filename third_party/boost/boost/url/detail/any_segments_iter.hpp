@@ -31,6 +31,8 @@ protected:
     {
     }
 
+    virtual ~any_segments_iter() = default;
+
 public:
     // this is adjusted
     // when self-intersecting
@@ -76,6 +78,8 @@ struct BOOST_SYMBOL_VISIBLE
     path_iter
     : any_segments_iter
 {
+    virtual ~path_iter() = default;
+
     explicit
     path_iter(
         string_view s) noexcept;
@@ -97,6 +101,8 @@ struct BOOST_SYMBOL_VISIBLE
     path_encoded_iter
     : public path_iter
 {
+    virtual ~path_encoded_iter() = default;
+
     explicit
     path_encoded_iter(
         pct_string_view s) noexcept;
@@ -118,6 +124,8 @@ struct BOOST_SYMBOL_VISIBLE
     segment_iter
     : any_segments_iter
 {
+    virtual ~segment_iter() = default;
+
     explicit
     segment_iter(
         string_view s) noexcept;
@@ -199,7 +207,7 @@ private:
         if(it_ == end_)
             return false;
         measure_impl(n,
-            string_view(*it_),
+            detail::to_sv(*it_),
             encode_colons);
         ++it_;
         return true;
@@ -211,7 +219,7 @@ private:
         char const* end) noexcept override
     {
         copy_impl(dest, end,
-            string_view(*it_++),
+            detail::to_sv(*it_++),
             encode_colons);
     }
 };
@@ -228,6 +236,8 @@ struct BOOST_SYMBOL_VISIBLE
     segment_encoded_iter
     : any_segments_iter
 {
+    virtual ~segment_encoded_iter() = default;
+
     explicit
     segment_encoded_iter(
         pct_string_view const& s) noexcept;
@@ -282,7 +292,7 @@ struct segments_encoded_iter
         {
             // throw on invalid input
             front = pct_string_view(
-                string_view(*first));
+                detail::to_sv(*first));
             auto it = first;
             if(++it == last)
                 fast_nseg = 1;
@@ -315,7 +325,7 @@ private:
         // throw on invalid input
         measure_impl(n,
             pct_string_view(
-                string_view(*it_++)),
+                detail::to_sv(*it_++)),
             encode_colons);
         return true;
     }
@@ -326,7 +336,7 @@ private:
         char const* end) noexcept override
     {
         copy_impl(dest, end,
-            string_view(*it_++),
+            detail::to_sv(*it_++),
             encode_colons);
     }
 };
