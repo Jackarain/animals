@@ -33,7 +33,7 @@ int main()
 					break;
 
 				boost::beast::flat_buffer buf;
-				auto bytes = co_await ws.async_read(buf, net_awaitable[ec]);
+				[[maybe_unused]] auto bytes = co_await ws.async_read(buf, net_awaitable[ec]);
 				if (ec)
 					break;
 

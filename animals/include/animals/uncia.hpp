@@ -251,7 +251,7 @@ namespace animals
 		}
 
 		net::awaitable<boost::system::error_code>
-		do_async_perform(http_request& req, http_response& result,
+		do_async_perform(http_request& req, [[maybe_unused]] http_response& result,
 			const std::string& url, std::string proxy_url)
 		{
 			boost::system::error_code ec;
