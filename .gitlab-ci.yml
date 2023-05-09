@@ -1,0 +1,9 @@
+stages:
+- build
+
+Build:
+  stage: build
+  script:
+    - cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug
+    - cmake --build build
+
