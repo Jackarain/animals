@@ -58,8 +58,6 @@ namespace animals
 	static const std::string ie_user_agent = R"(Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv:11.0) like Gecko)";
 	static const std::string curl_user_agent = R"(curl/7.64.0)";
 
-	template<class ... T> inline constexpr bool always_false = false;
-
 	template <typename Executor = net::any_io_executor>
 	class basic_goat
 	{
@@ -694,7 +692,7 @@ namespace animals
 				}
 				else
 				{
-					static_assert(always_false<S>, "non-exhaustive visitor!");
+					static_assert(!std::is_same_v<S, S>, "non-exhaustive visitor!");
 				}
 			}
 
