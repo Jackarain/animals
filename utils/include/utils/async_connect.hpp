@@ -8,10 +8,13 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 
-#pragma once
+#ifndef INCLUDE__2023_10_18__ASYNC_CONNECT_HPP
+#define INCLUDE__2023_10_18__ASYNC_CONNECT_HPP
 
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/connect.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/async_result.hpp>
 
 #include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/associated_cancellation_slot.hpp>
@@ -29,9 +32,9 @@
 #include <type_traits>
 
 
-
 namespace asio_util {
 	namespace net = boost::asio;
+	namespace ip = net::ip;
 
 	namespace detail {
 		template <typename Stream, typename Handler>
@@ -62,11 +65,11 @@ namespace asio_util {
 			net::post(ex,
 				[error, h = std::move(handler), begin]() mutable
 				{
-					if constexpr (std::is_same_v<ResultType,
+					if constexpr (std::same_as<ResultType,
 						typename Stream::endpoint_type>)
 						do_result(h, error, *begin);
 
-					if constexpr (!std::is_same_v<ResultType,
+					if constexpr (!std::same_as<ResultType,
 						typename Stream::endpoint_type>)
 						do_result(h, error, begin);
 				});
@@ -161,12 +164,15 @@ namespace asio_util {
 			{
 				bool has_a = false, has_aaaa = false;
 
-				for (auto begin_ = begin; begin_ != end; begin_++)
+				for (; begin != end && !(has_a && has_aaaa); begin++)
 				{
-					const auto& addr = begin_->endpoint().address();
+					const auto& addr = begin->endpoint().address();
 
-					has_aaaa |= net::ip::address(addr).is_v6();
-					has_a |= net::ip::address(addr).is_v4();
+					if (!has_aaaa)
+						has_aaaa = addr.is_v6();
+
+					if (!has_a)
+						has_a = addr.is_v4();
 				}
 
 				if (has_aaaa && has_a)
@@ -304,7 +310,9 @@ namespace asio_util {
 						auto timer = boost::make_local_shared<
 							steady_timer>(stream.get_executor());
 
-						timer->expires_from_now(200ms);
+						const auto delay = 200ms;
+
+						timer->expires_from_now(delay);
 						timer->async_wait([timer,
 							conn_func = std::move(conn_func),
 							context]
@@ -351,14 +359,18 @@ namespace asio_util {
 		};
 	}
 
-	template <typename Stream,
+	template <typename Protocol, typename Executor,
 		typename Iterator, typename ConnectHandler>
-		inline BOOST_ASIO_INITFN_AUTO_RESULT_TYPE(ConnectHandler,
-			void(boost::system::error_code, Iterator))
-		async_connect(Stream& s, Iterator begin,
-			BOOST_ASIO_MOVE_ARG(ConnectHandler) handler,
+		inline auto async_connect(net::basic_stream_socket<Protocol, Executor>& s,
+			Iterator begin,
+			ConnectHandler handler = net::default_completion_token_t<Executor>(),
 			typename net::enable_if<
 				!net::is_endpoint_sequence<Iterator>::value>::type* = 0)
+			-> decltype(net::async_initiate<ConnectHandler,
+				void(boost::system::error_code, Iterator)>
+					(detail::initiate_do_connect{}, handler, &s,
+					begin, Iterator(),
+					detail::default_connect_condition{}))
 	{
 		return net::async_initiate<ConnectHandler,
 			void(boost::system::error_code, Iterator)>
@@ -367,80 +379,107 @@ namespace asio_util {
 				detail::default_connect_condition{});
 	}
 
-	template <typename Stream,
-		typename Iterator, typename ConnectHandler>
-		inline BOOST_ASIO_INITFN_AUTO_RESULT_TYPE(ConnectHandler,
-			void(boost::system::error_code, Iterator))
-		async_connect(Stream& s, Iterator begin, Iterator end,
-			BOOST_ASIO_MOVE_ARG(ConnectHandler) handler)
-	{
+	template <typename Protocol, typename Executor, typename Iterator,
+			  BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code,
+												   Iterator))
+				  ConnectHandler = net::default_completion_token_t<Executor>>
+	auto async_connect(
+		net::basic_stream_socket<Protocol, Executor>& s, Iterator begin,
+		Iterator end,
+		ConnectHandler&& handler = net::default_completion_token_t<Executor>())
+		-> decltype(net::async_initiate<ConnectHandler,
+										void(boost::system::error_code, Iterator)>(
+			detail::initiate_do_connect{}, handler, &s, begin, end,
+			detail::default_connect_condition{})) {
 		return net::async_initiate<ConnectHandler,
-			void(boost::system::error_code, Iterator)>
-			(detail::initiate_do_connect{}, handler, &s,
-				begin, end,
-				detail::default_connect_condition{});
+								   void(boost::system::error_code, Iterator)>(
+			detail::initiate_do_connect{}, handler, &s, begin, end,
+			detail::default_connect_condition{});
 	}
 
-	template <typename Stream,
-		typename EndpointSequence, typename ConnectHandler>
-		inline BOOST_ASIO_INITFN_AUTO_RESULT_TYPE(ConnectHandler,
-			void(boost::system::error_code, typename Stream::endpoint_type))
-		async_connect(Stream& s, const EndpointSequence& endpoints,
-			BOOST_ASIO_MOVE_ARG(ConnectHandler) handler,
+	template <typename Protocol, typename Executor, typename EndpointSequence,
+		typename ConnectCondition,
+		BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code,
+			typename Protocol::endpoint))
+		ConnectHandler = net::default_completion_token_t<Executor>>
+		auto async_connect(
+			net::basic_stream_socket<Protocol, Executor>& s,
+			const EndpointSequence& endpoints,
+			ConnectHandler&& handler = net::default_completion_token_t<Executor>(),
 			typename net::enable_if<
-				net::is_endpoint_sequence<EndpointSequence>::value>::type* = 0)
-	{
+			net::is_endpoint_sequence<EndpointSequence>::value>::type* = 0) {
 		return net::async_initiate<ConnectHandler,
-			void(boost::system::error_code, typename Stream::endpoint_type)>
-			(detail::initiate_do_connect{}, handler, &s, endpoints,
-				detail::default_connect_condition{});
+			void(boost::system::error_code,
+				typename net::basic_stream_socket<
+				Protocol, Executor>::endpoint_type)>(
+					detail::initiate_do_connect{}, handler, &s, endpoints,
+					detail::default_connect_condition{});
 	}
 
-	template <typename Stream,
-		typename Iterator, typename ConnectHandler, typename ConnectCondition>
-			inline BOOST_ASIO_INITFN_AUTO_RESULT_TYPE(ConnectHandler,
-				void(boost::system::error_code, Iterator))
-		async_connect(Stream& s, Iterator begin,
-			ConnectCondition connect_condition,
-			BOOST_ASIO_MOVE_ARG(ConnectHandler) handler,
+	template <typename Protocol, typename Executor, typename Iterator,
+			  typename ConnectCondition,
+			  BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code,
+												   Iterator))
+				  ConnectHandler = net::default_completion_token_t<Executor>>
+	auto async_connect(
+		net::basic_stream_socket<Protocol, Executor>& s, Iterator begin,
+		ConnectCondition connect_condition,
+		ConnectHandler&& handler = net::default_completion_token_t<Executor>(),
+		typename net::enable_if<
+			!net::is_endpoint_sequence<Iterator>::value>::type* = 0)
+		-> decltype(net::async_initiate<ConnectHandler,
+										void(boost::system::error_code, Iterator)>(
+			detail::initiate_do_connect{}, handler, &s, begin, Iterator(),
+			connect_condition)) {
+		return net::async_initiate<ConnectHandler,
+								   void(boost::system::error_code, Iterator)>(
+			detail::initiate_do_connect{}, handler, &s, begin, Iterator(),
+			connect_condition);
+	}
+
+	template <typename Protocol, typename Executor, typename EndpointSequence,
+			  typename Iterator, typename ConnectCondition,
+			  BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code,
+												   typename Protocol::endpoint))
+				  ConnectHandler = net::default_completion_token_t<Executor>>
+	auto async_connect(
+		net::basic_stream_socket<Protocol, Executor>& s, Iterator begin,
+		Iterator end, ConnectCondition connect_condition,
+		ConnectHandler&& handler = net::default_completion_token_t<Executor>())
+		-> decltype(net::async_initiate<ConnectHandler,
+										void(boost::system::error_code, Iterator)>(
+			detail::initiate_do_connect{}, handler, &s, begin, end,
+			connect_condition)) {
+		return net::async_initiate<ConnectHandler,
+								   void(boost::system::error_code, Iterator)>(
+			detail::initiate_do_connect{}, handler, &s, begin, end,
+			connect_condition);
+	}
+
+	template <typename Protocol, typename Executor, typename EndpointSequence,
+		typename ConnectCondition,
+		BOOST_ASIO_COMPLETION_TOKEN_FOR(void(boost::system::error_code,
+			typename Protocol::endpoint))
+		ConnectHandler = net::default_completion_token_t<Executor>>
+		auto async_connect(
+			net::basic_stream_socket<Protocol, Executor>& s,
+			const EndpointSequence& endpoints, ConnectCondition connect_condition,
+			ConnectHandler&& handler = net::default_completion_token_t<Executor>(),
 			typename net::enable_if<
-				!net::is_endpoint_sequence<Iterator>::value>::type* = 0)
-	{
+			net::is_endpoint_sequence<EndpointSequence>::value>::type* = 0)
+		-> decltype(net::async_initiate<
+			ConnectHandler, void(boost::system::error_code,
+				typename net::basic_stream_socket<
+				Protocol, Executor>::endpoint_type)>(
+					detail::initiate_do_connect{}, handler, & s, endpoints,
+					connect_condition)) {
 		return net::async_initiate<ConnectHandler,
-			void(boost::system::error_code, Iterator)>
-			(detail::initiate_do_connect{}, handler, &s,
-				begin, Iterator(),
-				connect_condition);
-	}
-
-	template <typename Stream,
-		typename Iterator, typename ConnectHandler, typename ConnectCondition>
-		inline BOOST_ASIO_INITFN_AUTO_RESULT_TYPE(ConnectHandler,
-			void(boost::system::error_code, Iterator))
-		async_connect(Stream& s, Iterator begin, Iterator end,
-			ConnectCondition connect_condition,
-			BOOST_ASIO_MOVE_ARG(ConnectHandler) handler)
-	{
-		return net::async_initiate<ConnectHandler,
-			void(boost::system::error_code, Iterator)>
-			(detail::initiate_do_connect{}, handler, &s,
-				begin, end,
-				connect_condition);
-	}
-
-	template <typename Stream, typename EndpointSequence,
-		typename ConnectHandler, typename ConnectCondition>
-		inline BOOST_ASIO_INITFN_AUTO_RESULT_TYPE(ConnectHandler,
-			void(boost::system::error_code, typename Stream::endpoint_type))
-		async_connect(Stream& s, const EndpointSequence& endpoints,
-			ConnectCondition connect_condition,
-			BOOST_ASIO_MOVE_ARG(ConnectHandler) handler,
-			typename net::enable_if<
-				net::is_endpoint_sequence<EndpointSequence>::value>::type* = 0)
-	{
-		return net::async_initiate<ConnectHandler,
-			void(boost::system::error_code, typename Stream::endpoint_type)>
-				(detail::initiate_do_connect{}, handler, &s,
-					endpoints, connect_condition);
+			void(boost::system::error_code,
+				typename net::basic_stream_socket<
+				Protocol, Executor>::endpoint_type)>(
+					detail::initiate_do_connect{}, handler, &s, endpoints,
+					connect_condition);
 	}
 }
+
+#endif // INCLUDE__2023_10_18__ASYNC_CONNECT_HPP
