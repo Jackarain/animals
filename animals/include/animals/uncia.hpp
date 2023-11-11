@@ -102,6 +102,14 @@ namespace animals
 		// 重置, 用于重复使用应该对象.
 		inline void reset()
 		{
+			boost::variant2::visit([&](auto& t) mutable
+				{
+					try {
+						auto& next_layer = t->next_layer();
+						auto& stream = beast::get_lowest_layer(next_layer);
+						stream.close();
+					} catch (const std::exception&) {}
+				}, m_stream);
 			m_stream = variant_stream{};
 			m_url.clear();
 		}
